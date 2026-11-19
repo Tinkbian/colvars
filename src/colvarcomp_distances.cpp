@@ -61,7 +61,8 @@ void colvar::distance::calc_value()
 
 void colvar::distance::calc_gradients()
 {
-  cvm::rvector const u = dist_v.unit();
+  // At coincident centers the norm has no preferred gradient direction.
+  cvm::rvector const u = x.real_value > 0.0 ? dist_v / x.real_value : cvm::rvector(0.0, 0.0, 0.0);
   group1->set_weighted_gradient(-1.0 * u);
   group2->set_weighted_gradient(       u);
 }

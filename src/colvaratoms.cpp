@@ -1761,6 +1761,7 @@ void cvm::atom_group::reset_atoms_data(bool reset_positions) {
   if (reset_positions) std::fill(atoms_pos.begin(), atoms_pos.end(), 0);
   std::fill(atoms_vel.begin(), atoms_vel.end(), 0);
   std::fill(atoms_grad.begin(), atoms_grad.end(), 0);
+  scalar_com_gradient.reset();
   std::fill(atoms_total_force.begin(), atoms_total_force.end(), 0);
 }
 

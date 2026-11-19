@@ -12,18 +12,64 @@ set(OPENMM_COLVARS_PYTHON_INSTALL_DIR "" CACHE PATH "Python installation directo
 get_filename_component(COLVARS_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
 set(COLVARS_CORE_DIR "${COLVARS_SOURCE_DIR}/src")
 
-find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
-execute_process(COMMAND "${Python_EXECUTABLE}" -c
-    "import pathlib,openmm; print(pathlib.Path(openmm.__file__).resolve().parent.parent/'OpenMM.libs')"
-    RESULT_VARIABLE OPENMM_PYTHON_RESULT OUTPUT_VARIABLE OPENMM_PYTHON_ROOT
-    OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-find_path(OPENMM_INCLUDE_DIR openmm/Context.h
-    HINTS "${OPENMM_ROOT}" "${OPENMM_PYTHON_ROOT}" "$ENV{CONDA_PREFIX}"
-    PATH_SUFFIXES include Library/include REQUIRED)
-find_library(OPENMM_LIBRARY NAMES OpenMM
-    HINTS "${OPENMM_ROOT}" "${OPENMM_PYTHON_ROOT}" "$ENV{CONDA_PREFIX}"
-    PATH_SUFFIXES lib Library/lib REQUIRED)
+# Older versions cached automatic find_path/find_library results in these
+# variables. Discard those results so changing Python or OPENMM_ROOT works
+# on reconfigure. A fresh -D override has its own CMake cache help string.
+foreach(var IN ITEMS OPENMM_INCLUDE_DIR OPENMM_LIBRARY OPENMM_CUDA_LIBRARY)
+    get_property(old_help CACHE "${var}" PROPERTY HELPSTRING)
+    if(old_help STREQUAL "Path to a file." OR old_help STREQUAL "Path to a library.")
+        unset(${var} CACHE)
+    endif()
+endforeach()
+set(OPENMM_INCLUDE_DIR "" CACHE PATH "Explicit OpenMM headers when OPENMM_ROOT is unset")
+set(OPENMM_LIBRARY "" CACHE FILEPATH "Explicit OpenMM core library when OPENMM_ROOT is unset")
+set(OPENMM_CUDA_LIBRARY "" CACHE FILEPATH "Explicit OpenMM CUDA library when OPENMM_ROOT is unset")
+
+if(OPENMM_COLVARS_BUILD_PYTHON)
+    find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
+endif()
+if(OPENMM_COLVARS_BUILD_PYTHON AND NOT OPENMM_ROOT AND NOT OPENMM_INCLUDE_DIR AND NOT OPENMM_LIBRARY)
+    # Building the SWIG wrapper only needs Python headers. An isolated build
+    # Python need not yet have a working OpenMM runtime available to import.
+    execute_process(COMMAND "${Python_EXECUTABLE}" -c
+        "import importlib.util,pathlib,sys; pkg=importlib.util.find_spec('openmm'); print(pathlib.Path(pkg.origin).resolve().parent.parent/'OpenMM.libs' if pkg and pkg.origin else '', sys.prefix, sep=';')"
+        OUTPUT_VARIABLE OPENMM_PYTHON_PREFIXES OUTPUT_STRIP_TRAILING_WHITESPACE
+        COMMAND_ERROR_IS_FATAL ANY)
+endif()
+if(OPENMM_ROOT)
+    # An explicit SDK must take precedence over other activated environments,
+    # including when this build directory previously used a different SDK.
+    find_path(colvars_openmm_headers openmm/Context.h PATHS "${OPENMM_ROOT}"
+        PATH_SUFFIXES include Library/include NO_DEFAULT_PATH NO_CACHE REQUIRED)
+elseif(OPENMM_INCLUDE_DIR)
+    set(colvars_openmm_headers "${OPENMM_INCLUDE_DIR}")
+elseif(OPENMM_LIBRARY)
+    # Handles prefix/lib, prefix/lib64 and prefix/lib/<architecture>.
+    get_filename_component(sdk_lib_dir "${OPENMM_LIBRARY}" DIRECTORY)
+    find_path(colvars_openmm_headers openmm/Context.h PATHS "${sdk_lib_dir}/.." "${sdk_lib_dir}/../.."
+        PATH_SUFFIXES include NO_DEFAULT_PATH NO_CACHE REQUIRED)
+else()
+    if(OPENMM_PYTHON_PREFIXES)
+        find_path(colvars_openmm_headers openmm/Context.h PATHS ${OPENMM_PYTHON_PREFIXES}
+            PATH_SUFFIXES include Library/include NO_DEFAULT_PATH NO_CACHE)
+    endif()
+    if(NOT colvars_openmm_headers)
+        find_path(colvars_openmm_headers openmm/Context.h HINTS "$ENV{CONDA_PREFIX}"
+            PATH_SUFFIXES include Library/include NO_CACHE REQUIRED)
+    endif()
+endif()
+set(OPENMM_INCLUDE_DIR "${colvars_openmm_headers}")
+get_filename_component(openmm_sdk_prefix "${OPENMM_INCLUDE_DIR}" DIRECTORY)
+if(OPENMM_ROOT OR NOT OPENMM_LIBRARY)
+    find_library(colvars_openmm_library NAMES OpenMM PATHS "${openmm_sdk_prefix}"
+        PATH_SUFFIXES lib lib64 "lib/${CMAKE_LIBRARY_ARCHITECTURE}"
+        NO_DEFAULT_PATH NO_CACHE REQUIRED)
+    set(OPENMM_LIBRARY "${colvars_openmm_library}")
+elseif(NOT EXISTS "${OPENMM_LIBRARY}")
+    message(FATAL_ERROR "OPENMM_LIBRARY does not exist: ${OPENMM_LIBRARY}")
+endif()
 get_filename_component(OPENMM_LIBRARY_DIR "${OPENMM_LIBRARY}" DIRECTORY)
+set(openmm_cuda_library_dir "${OPENMM_LIBRARY_DIR}/plugins")
 message(STATUS "OpenMM headers: ${OPENMM_INCLUDE_DIR}")
 message(STATUS "OpenMM library: ${OPENMM_LIBRARY}")
 if(NOT EXISTS "${OPENMM_INCLUDE_DIR}/openmm/internal/CustomCPPForceImpl.h")
@@ -73,8 +119,15 @@ if(OPENMM_COLVARS_ENABLE_CUDA)
     enable_language(CUDA)
     set(CMAKE_CUDA_STANDARD 17)
     set(CMAKE_CUDA_STANDARD_REQUIRED ON)
-    find_library(OPENMM_CUDA_LIBRARY NAMES OpenMMCUDA
-        HINTS "${OPENMM_LIBRARY_DIR}/plugins" "${OPENMM_LIBRARY_DIR}" REQUIRED)
+    if(OPENMM_ROOT OR NOT OPENMM_CUDA_LIBRARY)
+        find_library(colvars_openmm_cuda_library NAMES OpenMMCUDA
+            PATHS "${OPENMM_LIBRARY_DIR}/plugins" "${OPENMM_LIBRARY_DIR}"
+            NO_DEFAULT_PATH NO_CACHE REQUIRED)
+        set(OPENMM_CUDA_LIBRARY "${colvars_openmm_cuda_library}")
+    elseif(NOT EXISTS "${OPENMM_CUDA_LIBRARY}")
+        message(FATAL_ERROR "OPENMM_CUDA_LIBRARY does not exist: ${OPENMM_CUDA_LIBRARY}")
+    endif()
+    get_filename_component(openmm_cuda_library_dir "${OPENMM_CUDA_LIBRARY}" DIRECTORY)
     if(NOT EXISTS "${OPENMM_INCLUDE_DIR}/openmm/cuda/CudaContext.h")
         message(FATAL_ERROR "CUDA build requires installed OpenMM CUDA internal headers from the same OpenMM version")
     endif()
@@ -110,8 +163,8 @@ if(OPENMM_COLVARS_BUILD_PYTHON)
     target_link_libraries(_openmm_colvars PRIVATE OpenMMColvars Python::Module)
     set_target_properties(_openmm_colvars PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY "${PYTHON_OUTPUT_DIR}"
-        BUILD_RPATH "${OPENMM_LIBRARY_DIR};${OPENMM_LIBRARY_DIR}/plugins"
-        INSTALL_RPATH "${OPENMM_LIBRARY_DIR};${OPENMM_LIBRARY_DIR}/plugins")
+        BUILD_RPATH "${OPENMM_LIBRARY_DIR};${openmm_cuda_library_dir}"
+        INSTALL_RPATH "${OPENMM_LIBRARY_DIR};${openmm_cuda_library_dir}")
     if(NOT OPENMM_COLVARS_PYTHON_INSTALL_DIR)
         execute_process(COMMAND "${Python_EXECUTABLE}" -c "import sysconfig; print(sysconfig.get_path('platlib'))"
             OUTPUT_VARIABLE OPENMM_COLVARS_PYTHON_INSTALL_DIR OUTPUT_STRIP_TRAILING_WHITESPACE

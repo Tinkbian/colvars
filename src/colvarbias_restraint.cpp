@@ -632,7 +632,7 @@ void colvarbias_restraint_k_moving::update_k(cvm::real lambda) {
 
   force_k = starting_force_k + (target_force_k - starting_force_k) * cvm::pow(lambda, lambda_exp);
   force_k_incr = force_k - force_k_old;
-  if (!target_nstages && (cvmodule->step_absolute() > first_step + target_nsteps)) {
+  if (!target_nstages && (cvmodule->step_absolute() - first_step > target_nsteps)) {
     force_k_incr = 0.0;
   }
   cvmodule->log("Updated force constant for the restraint bias \""+

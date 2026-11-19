@@ -1,6 +1,101 @@
 # Local validation
 
-## Windows hardware run, 2026-11-19
+## Current chinfo hardware run, 2026-11-19
+
+The source checkout was `585762a039665a344670d4678c88ee8e214002a2` plus the changes in this revision. Separate Release builds installed the Python modules in fresh CPU and CUDA directories. The CPU extension SHA-256 was `e15adbde6c8c057a4223cb41f14edbf350e6ccc5d4ec7bb67ee22af9e4b38f8d` and the CUDA extension SHA-256 was `35e64e02b444aca5ca6b9721a59743752ae93b7d560ec86145b6a0dd7634df15`. The import libraries, headers, OpenMM Python module and CUDA plugin came from the same OpenMM 8.6.1 environment, revision `b399af4725573963b46d6c1083fdcf7a37615857`. Tests ran locally on Windows x64 with Python 3.11.18, NumPy 2.4.6, MSVC 14.44, CMake 4.5.0, Ninja 1.13.2, SWIG 4.5.1, NVCC 12.9.86, CUDA runtime 12.9 and driver 610.88. NVCC targeted `sm_120` on an NVIDIA GeForce RTX 5070 Ti. Lepton came from the matching OpenMM source release.
+
+### Build and test commands
+
+In a native x64 MSVC shell with the matching conda environment active, set `$sdk` to its `Library` directory, `$src` to the matching OpenMM source tree and `$python` to that environment's Python. The example directory names below represent the separate local build and install directories.
+
+```powershell
+foreach ($mode in 'cpu','cuda') {
+    $build = Join-Path $env:TEMP "chinfo-585762a-final-$mode"
+    $install = Join-Path $build 'release'
+    $cuda = if ($mode -eq 'cuda') { 'ON' } else { 'OFF' }
+    $arch = if ($mode -eq 'cuda') { @('-DCMAKE_CUDA_ARCHITECTURES=120') } else { @() }
+    cmake -S openmm -B $build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DPython_EXECUTABLE=$python" "-DOPENMM_ROOT=$sdk" "-DOPENMM_SOURCE_DIR=$src" "-DOPENMM_COLVARS_ENABLE_CUDA=$cuda" "-DOPENMM_COLVARS_PYTHON_INSTALL_DIR=$install" @arch
+    cmake --build $build --parallel
+    cmake --install $build
+}
+$env:PYTHONPATH = "$env:TEMP/chinfo-585762a-final-cpu/release"
+& $python -m pytest -q -s openmm/tests --openmm-platform Reference,CPU --results-json host.json
+foreach ($hostPlatform in 'Reference','CPU') {
+    & $python openmm/examples/minimal.py --platform $hostPlatform --colvars-mode cpu --steps 1000 --output "$env:TEMP/chinfo-release-example-$hostPlatform"
+}
+$env:PYTHONPATH = "$env:TEMP/chinfo-585762a-final-cuda/release"
+foreach ($p in 'single','mixed','double') {
+    & $python -m pytest -q -s openmm/tests --openmm-platform CUDA --openmm-precision $p --require-cuda --results-json "cuda-$p.json"
+}
+& $python openmm/examples/minimal.py --platform CUDA --precision mixed --colvars-mode gpu --steps 1000 --output "$env:TEMP/chinfo-release-example-CUDA"
+```
+
+### Local results
+
+| Status | Test | Result |
+| --- | --- | --- |
+| PASS | CPU-only and CUDA extension builds, SWIG, file and string configurations | Both installed modules imported in fresh Python processes. The Reference, CPU and CUDA/mixed examples each integrated 1,000 steps and wrote a trajectory and state file. |
+| PASS | Reference and CPU | 232 passed. |
+| PASS | Single-device CUDA, GPU groups and compact CPU fallback | 228 passed in each of single, mixed and double. Each precision ran as a separate process with `--require-cuda`. |
+| SKIP | Pathologically thin CUDA boxes | Four entries per precision across the two CUDA backends and two box shapes. The height is 1e−180 nm. Reference and CPU tested the intended rejection and preservation of the bias state. |
+| PASS | Isolated CUDA adapter | Gather and additive scatter matched independent arrays exactly in single, mixed and double on device 0. Cases exercised reordered indices, mixed position corrections, triclinic cell offsets and prefilled padded fixed-point forces. [Adapter measurements](validation/rtx5070ti-adapter.json) |
+| PASS | Shared Colvars core | Six CTest unit tests, including 5,000 comparisons with independent nearest-image lattice enumeration, maximum distance error 1.64313e−14 nm against a 1e−12 nm limit. All 108 eligible functional configurations ran. Spiff matched 206 trajectory and force files across 103 cases at relative tolerance 1e−6. [Case names, exclusions and binary hashes](validation/chinfo-core.json) |
+| SKIP | Core golden comparisons | One case has a disabled marker and four have no expected files. All five executed. |
+| FAIL | Intermediate CUDA suite, before isolating deliberate constructor failures | 18 late failures in a single process. With and without Colvars, repeated invalid OpenMM Context construction retained about 195 MiB on this driver and failed to select a device on attempt 40. Two controls each completed 45 valid Contexts. Each new malformed-restart test now runs its error-message and surviving-Context assertions together in a fresh process. [Reproduction and source](REVIEW.md) |
+| NOT TESTED | Broader compatibility | Multi-device CUDA, HIP, distributed multi-process replica simulations, complete NAMD/GROMACS runs, LibTorch and a Compute Sanitizer run on the final binary. 8.1.1 headers and 8.5.2 SDK checks do not establish runtime compatibility. |
+
+At 0.65 nm the harmonic restraint with width 0.1 nm, center 0.5 nm and force constant 1 kJ/mol has effective stiffness 100 kJ/mol/nm². The independent prediction is 1.125 kJ/mol, with x forces +15 and −15 kJ/mol/nm. The CUDA/mixed GPU example returned 1.125000000000005 kJ/mol and exactly those forces. At step 1,000 its CV was 0.3615913658655028 nm and its bias energy was 0.9578475001488554 kJ/mol, with opposite x forces of magnitude 13.840863413410261 kJ/mol/nm. It recorded 1,001 distinct updates including the initial evaluation. The host examples ended at 0.36159136586640184 nm.
+
+Starting from rest with masses 12 and 24 Da, the independent one-step x coordinates are 0.00000125 and 0.649999375 nm. Reference and CPU reproduced them within 2.12e−22 nm. The table gives maximum absolute errors from the five mass-weighted distance geometries across both requested backends. The limits in parentheses are the test's absolute tolerances.
+
+| Platform and precision | CV, nm | Energy, kJ/mol | Force, kJ/mol/nm |
+| --- | ---: | ---: | ---: |
+| Reference and CPU | 0 (1e−12) | 0 (1e−9) | 1.42e−14 (1e−8) |
+| CUDA single | 5.44e−8 (2e−6) | 2.12e−6 (2e−4) | 1.26e−4 (2e−3) |
+| CUDA mixed | 4.44e−16 (2e−8) | 2.49e−14 (2e−6) | 2.33e−10 (2e−5) |
+| CUDA double | 0 (1e−12) | 0 (1e−9) | 2.33e−10 (1e−8) |
+
+Across the four final suite runs, 916 tests passed, 12 skipped and zero failed. The oracle file retains 120 records covering two-particle integration, all five distance geometries, Kabsch RMSD and actual accepted/rejected MC trials. The per-test file records the outcome for 928 entries and, for instrumented numerical assertions, the largest discrepancy per source line and tolerance, the corresponding actual and expected values, and the number of comparisons. State-string and exception tests record pass/fail. [Oracle measurements](validation/chinfo-oracles.json) · [Per-test results](validation/chinfo-pytest-results.json)
+
+The unit suite also checks independent Kabsch/finite-difference RMSD, analytical coordination forces, physical-force addition, nonconsecutive and overlapping mass-weighted groups, spectator atoms, same-step coordinate or box edits, group masks, moving-wall work, real MC accepts/rejects and metadynamics restart. The isolated device oracle used `python openmm/scripts/check_cuda_sources.py --openmm-source <matching-source> --nvrtc-library <env>/Library/bin/nvrtc64_120_0.dll --architecture compute_120 --device 0 --json adapter.json` from a Python environment with Numba. The core used the CMake, `run_colvars_test` and Spiff commands in the earlier Windows record below with a fresh copy of the functional input files.
+
+### Matched CUDA timings and Nsight Systems
+
+The three modes integrated the same periodic 32,768-particle Lennard-Jones system on device 0 in mixed precision. Both biased modes used a distance restraint between two 128-particle groups. Verlet timestep was 1 fs, initial velocity seed 20261118, warmup 1,000 steps and reporting interval zero. Each timing mean uses three consecutive 10,000-step blocks. Overhead is the ratio of the mean elapsed times minus one. Ranges below show the minimum and maximum block throughput. The profiling runs were separate.
+
+| Mode | Initial steps/s | Indexed centers only | Final mean steps/s | Final range | Final ns/day | Final overhead |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| OpenMM CUDA | 4,911.44 | 4,940.83 | 4,648.53 | 4,609.78–4,720.72 | 401.63 | 0% |
+| CUDA/ColvarsGPU | 2,390.49 | 2,365.49 | 2,795.43 | 2,542.83–2,983.42 | 241.53 | +67.03% |
+| CUDA/ColvarsCPU | 3,142.86 | 3,271.84 | 2,554.50 | 2,534.76–2,574.56 | 220.71 | +81.96% |
+
+The indexed reduction removed two group coordinate kernels per evaluation, with no measured throughput gain in that timing series. Applying a mapped center-force vector with device-resident weights also removed the per-atom gradient upload. GPU-mode throughput exceeded the compact CPU mode in the first final series. Its block rates varied by 441 steps/s and bare OpenMM throughput also shifted across runs. [Initial timings](validation/chinfo-cuda-before.json) · [Indexed-center timings](validation/chinfo-cuda-indexed-centers.json) · [First final series](validation/chinfo-cuda-final.json)
+
+A second three-block series after all correctness tests, using the same installed binary and protocol, gave the following results. Compact CPU was faster in this repeat. For this distance CV the device groups still wait for host component and bias work, and the fallback needs only two compact copies per evaluation. Nsight measured the transfer reduction directly. The two timing series gave different throughput rankings. [Second final series](validation/chinfo-cuda-repeat.json)
+
+| Mode | Repeat mean steps/s | Repeat range | Repeat ns/day | Repeat overhead |
+| --- | ---: | ---: | ---: | ---: |
+| OpenMM CUDA | 3,998.88 | 3,993.42–4,005.15 | 345.50 | 0% |
+| CUDA/ColvarsGPU | 2,446.66 | 2,401.23–2,475.13 | 211.39 | +63.47% |
+| CUDA/ColvarsCPU | 2,576.86 | 2,481.90–2,708.33 | 222.64 | +55.40% |
+
+| Final trace per MD step | H2D bytes | D2H bytes | Executed kernels | Explicit host sync calls | Device allocations / frees |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| OpenMM CUDA | 8,912.90 | 8,396.67 | 9.0010 | 1.0099 | 0 / 0 |
+| CUDA/ColvarsGPU | 8,933.38 | 8,396.67 | 15.0016 | 3.0176 | 0 / 0 |
+| CUDA/ColvarsCPU | 15,077.99 | 14,541.28 | 11.0012 | 2.0169 | 0 / 0 |
+
+GPU-mode kernels per MD step fell from 17.0018 to 15.0016 after the indexed reduction. GPU-mode H2D fell from 15,077.99 to 8,933.38 bytes per MD step after the force change. This is 6,144 bytes per evaluation, with 10,001 evaluations in the captured range. The final trace recorded 20,002 center-force kernels. Total D2H matched bare OpenMM. CUPTI copy counts include the underlying OpenMM simulation, and mapped host-memory access is outside those counts. Distance and harmonic bias still run on the CPU and the GPU mode has approximately two additional explicit host synchronization calls per step versus bare OpenMM. RMSD and coordination had numerical coverage; their throughput was outside this benchmark. [Initial trace](validation/chinfo-cuda-profile-before.json) · [Indexed-center trace](validation/chinfo-cuda-profile-indexed-centers.json) · [Final trace](validation/chinfo-cuda-profile-final.json)
+
+```powershell
+python openmm/examples/benchmark.py --platform CUDA --precision mixed --device 0 --particles 32768 --group-size 128 --warmup 1000 --steps 10000 --repeats 3 --report-interval 0 --json timings.json
+$env:NSYS_NVTX_PROFILER_REGISTER_ONLY = '0'
+foreach ($mode in 'baseline','gpu','cpu') {
+    nsys profile --trace=cuda,nvtx --cuda-graph-trace=node --sample=none --cpuctxsw=none --capture-range=nvtx --nvtx-capture=integrate@openmm-colvars-benchmark --capture-range-end=stop --export=sqlite -o "trace-$mode" python openmm/examples/benchmark.py --platform CUDA --precision mixed --device 0 --particles 32768 --group-size 128 --warmup 1000 --steps 10000 --report-interval 0 --modes $mode --repeats 1 --profile-range --json "trace-$mode.json"
+}
+```
+
+## Earlier Windows hardware run, 2026-11-19
 
 Starting revision `8379ea411672171af23544e3186cac2507c413d2`. Local Windows x64
 builds used Python 3.11.18, OpenMM 8.6.1, MSVC 14.44, SDK 10.0.22621,

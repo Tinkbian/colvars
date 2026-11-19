@@ -29,16 +29,17 @@ void ColvarsForceImpl::initialize(ContextImpl& context) {
     if (platform_ != "Reference" && platform_ != "CPU")
         throw OpenMMException("Colvars supports OpenMM Reference, CPU, and CUDA platforms");
     // Older OpenMM CustomCPP kernels use a signed shift for the group mask.
-    if (owner_.getForceGroup() == 31)
+    if (forceGroup == 31)
         throw OpenMMException("Colvars force group 31 requires CUDA; use a group from 0 through 30 on CPU/Reference");
     CustomCPPForceImpl::initialize(context);
     proxy_ = std::make_unique<colvarproxy_openmm>(owner_, context.getSystem());
     proxy_->initializeColvars(context);
 }
 double ColvarsForceImpl::calcForcesAndEnergy(ContextImpl& c, bool forces, bool energy, int groups) {
-    OpenMMColvarsLock lock(&proxy());
-    if (!(static_cast<std::uint32_t>(groups) & (std::uint32_t(1) << owner_.getForceGroup()))) return 0.0;
+    // CustomCPPForceImpl captures the System's group when this Context is built.
+    if (!(static_cast<std::uint32_t>(groups) & (std::uint32_t(1) << forceGroup))) return 0.0;
     if (!forces && !energy) return 0.0;
+    OpenMMColvarsLock lock(&proxy());
     if (cuda_) return cuda_->execute(c, forces, energy);
     return CustomCPPForceImpl::calcForcesAndEnergy(c, forces, energy, groups);
 }

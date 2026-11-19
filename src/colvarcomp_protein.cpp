@@ -247,7 +247,7 @@ void colvar::alpha_angles::calc_gradients()
 
 void colvar::alpha_angles::collect_gradients(std::vector<int> const &atom_ids, std::vector<cvm::rvector> &atomic_gradients)
 {
-  cvm::real cvc_coeff = sup_coeff * cvm::real(sup_np) * cvm::integer_power(value().real_value, sup_np-1);
+  cvm::real const cvc_coeff = sup_coeff * cvm::integer_power_derivative(value().real_value, sup_np);
 
   if (theta.size()) {
     cvm::real const theta_norm = (1.0-hb_coeff) / cvm::real(theta.size());
@@ -559,7 +559,7 @@ void colvar::dihedPC::calc_gradients()
 
 void colvar::dihedPC::collect_gradients(std::vector<int> const &atom_ids, std::vector<cvm::rvector> &atomic_gradients)
 {
-  cvm::real cvc_coeff = sup_coeff * cvm::real(sup_np) * cvm::integer_power(value().real_value, sup_np-1);
+  cvm::real const cvc_coeff = sup_coeff * cvm::integer_power_derivative(value().real_value, sup_np);
   for (size_t i = 0; i < theta.size(); i++) {
     cvm::real const t = (PI / 180.) * theta[i]->value().real_value;
     cvm::real const dcosdt = - (PI / 180.) * cvm::sin(t);

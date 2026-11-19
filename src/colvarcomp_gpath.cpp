@@ -642,7 +642,9 @@ void colvar::CVBasedPath::computeDistanceBetweenReferenceFrames(std::vector<cvm:
 cvm::real colvar::CVBasedPath::getPolynomialFactorOfCVGradient(size_t i_cv) const {
     cvm::real factor_polynomial = 1.0;
     if (cv[i_cv]->value().type() == colvarvalue::type_scalar) {
-        factor_polynomial = cv[i_cv]->sup_coeff * cv[i_cv]->sup_np * cvm::pow(cv[i_cv]->value().real_value, cv[i_cv]->sup_np - 1);
+        const int exponent = cv[i_cv]->sup_np;
+        if (exponent == 0) return 0.0;
+        factor_polynomial = cv[i_cv]->sup_coeff * exponent * cvm::pow(cv[i_cv]->value().real_value, exponent - 1.0);
     } else {
         factor_polynomial = cv[i_cv]->sup_coeff;
     }

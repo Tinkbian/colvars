@@ -2246,9 +2246,7 @@ void colvar::communicate_forces()
     for (i = 0; i < cvcs.size(); i++) {
       if (!cvcs[i]->is_enabled()) continue;
       (cvcs[i])->apply_force(f * (cvcs[i])->sup_coeff *
-                             cvm::real((cvcs[i])->sup_np) *
-                             (cvm::integer_power((cvcs[i])->value().real_value,
-                                                 (cvcs[i])->sup_np-1)));
+                             cvm::integer_power_derivative((cvcs[i])->value().real_value, (cvcs[i])->sup_np));
     }
 
   } else {

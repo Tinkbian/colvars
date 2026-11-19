@@ -102,17 +102,26 @@ public:
   // Math functions
 
   /// Override the STL pow() with a product for n integer
-  static COLVARS_HOST_DEVICE inline real integer_power(real const &x, int const n)
+  static COLVARS_HOST_DEVICE inline real integer_power(real const &x, std::int64_t const n)
   {
     // Original code: math_special.h in LAMMPS
     double yy, ww;
+    if (n == 0) return 1.0;
     if (x == 0.0) return 0.0;
-    int nn = (n > 0) ? n : -n;
+    // Unsigned magnitude also represents the absolute value of the minimum exponent.
+    std::uint64_t nn = static_cast<std::uint64_t>(n);
+    if (n < 0) nn = -nn;
     ww = x;
     for (yy = 1.0; nn != 0; nn >>= 1, ww *=ww) {
       if (nn & 1) yy *= ww;
     }
     return (n > 0) ? yy : 1.0/yy;
+  }
+
+  static inline real integer_power_derivative(real x, int n)
+  {
+    if (n == 0) return 0.0;
+    return n * integer_power(x, static_cast<std::int64_t>(n) - 1);
   }
 
   template <int n>
@@ -515,8 +524,17 @@ public:
   /// Also calls setup() member functions of colvars and biases
   int update_engine_parameters();
 
-  /// (Re)initialize and (re)read the input state file calling read_restart()
+  /// Metadata for engines that resume at the already evaluated restart step.
+  struct restart_info {
+    bool has_timestep = false;
+    real timestep = 0.0;
+    std::vector<colvar const *> variables;
+    std::vector<colvarbias const *> biases;
+  };
+
+  /// Load the input state. Requesting metadata requires an explicit saved step.
   int setup_input();
+  int setup_input(restart_info *info);
 
   /// Whether a restart state was loaded, including defaultInputStateFile.
   bool has_loaded_state() const { return state_loaded_; }
@@ -526,7 +544,11 @@ public:
 
 private:
 
-  template <typename IST> IST & read_state_template_(IST &is);
+  template <typename IST> IST & read_state_template_(IST &is, restart_info *info);
+  std::istream & read_state(std::istream &is, restart_info *info);
+  memory_stream & read_state(memory_stream &is, restart_info *info);
+  std::istream & read_objects_state(std::istream &is, restart_info *info);
+  memory_stream & read_objects_state(memory_stream &is, restart_info *info);
 
   /// Default input state file; if given, it is read unless the MD engine provides it
   std::string default_input_state_file_;

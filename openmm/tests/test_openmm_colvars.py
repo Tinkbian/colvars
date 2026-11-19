@@ -272,6 +272,26 @@ def test_force_group_queries_do_not_advance_bias(engine, tmp_path):
     del context, integrator
 
 
+def test_force_group_is_captured_by_each_context(engine, tmp_path):
+    context, integrator, force = make_context(engine, tmp_path, group=5)
+    positions = geometry([0.7, 0.2, -0.1])
+    context.setPositions(positions)
+    _, expected_energy, expected_forces = harmonic_oracle(positions)
+    force.setForceGroup(6)
+    for selected, excluded in ((5, 6), (6, 5)):
+        energy, forces = state_values(context, groups=1 << excluded)
+        np.testing.assert_allclose(energy, 0.0, rtol=0, atol=0)
+        np.testing.assert_array_equal(forces, 0.0)
+        assert force.getBiasUpdateCount(context) == 0
+        energy, forces = state_values(context, groups=1 << selected)
+        np.testing.assert_allclose(energy, expected_energy, rtol=0, atol=engine.tolerances[1])
+        np.testing.assert_allclose(forces, expected_forces, rtol=0, atol=engine.tolerances[2])
+        assert force.getBiasUpdateCount(context) == 1
+        if selected == 5:
+            context.reinitialize()
+            context.setPositions(positions)
+
+
 def test_metadynamics_same_step_is_read_only(engine, tmp_path):
     context, integrator, force = make_context(engine, tmp_path, config=distance_config("metadynamics"))
     positions = geometry([0.6, 0.0, 0.0])

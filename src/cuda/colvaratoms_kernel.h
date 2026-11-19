@@ -51,7 +51,8 @@ int atoms_calc_cog_com(
   unsigned int* tbcount,
   cudaGraphNode_t& node,
   cudaGraph_t& graph,
-  const std::vector<cudaGraphNode_t>& dependencies);
+  const std::vector<cudaGraphNode_t>& dependencies,
+  const int* position_index = nullptr, unsigned int position_stride = 0);
 
 int atoms_calc_cog(
   const cvm::real* atoms_pos_ag,
@@ -74,6 +75,12 @@ int atoms_total_force_from_proxy(
   unsigned int num_atoms,
   unsigned int proxy_stride,
   cudaStream_t stream);
+
+int apply_center_force_to_proxy(
+  const int* atoms_proxy_index, cvm::real* proxy_force,
+  const cvm::real* weights, const cvm::rvector* center_force,
+  unsigned int num_atoms, unsigned int proxy_stride, cudaGraphNode_t& node,
+  cudaGraph_t& graph, const std::vector<cudaGraphNode_t>& dependencies);
 
 int apply_main_colvar_force_to_proxy(
   const int* atoms_proxy_index,

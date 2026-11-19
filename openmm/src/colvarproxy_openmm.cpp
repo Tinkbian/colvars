@@ -15,8 +15,10 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <sstream>
 using namespace OpenMM;
 using namespace ColvarsPlugin;
@@ -143,29 +145,49 @@ void colvarproxy_openmm::initializeColvars(ContextImpl& context) {
     // State mutation and fresh force evaluation must be separable for OpenMM.
     for (auto* cv : *cvmodule->variables()) {
         if (cv->get_time_step_factor() != 1)
-            throw OpenMMException("OpenMM Colvars requires timeStepFactor 1 on every colvar; use OpenMM integrator force groups for multiple time stepping");
+            throw OpenMMException("OpenMM Colvars requires timeStepFactor 1 on every colvar");
         if (cv->is_enabled(colvardeps::f_cv_extended_Lagrangian))
             throw OpenMMException("OpenMM Colvars: extendedLagrangian is not supported by repeat-safe evaluation");
     }
     if (cvmodule->scripted_forces())
         throw OpenMMException("OpenMM Colvars does not support scripted forces");
     const bool barostat = hasMonteCarloBarostat(context);
+    std::vector<colvarbias*> adaptiveBiases;
     for (auto* bias : cvmodule->biases) {
         if (bias->get_time_step_factor() != 1)
-            throw OpenMMException("OpenMM Colvars requires timeStepFactor 1 on every bias; use OpenMM integrator force groups for multiple time stepping");
+            throw OpenMMException("OpenMM Colvars requires timeStepFactor 1 on every bias");
         if (!bias->supports_state_free_evaluation())
             throw OpenMMException("OpenMM Colvars bias does not support repeat-safe evaluation: " + bias->bias_type);
-        if (barostat) {
-            const auto* restraint = dynamic_cast<const colvarbias_restraint_moving*>(bias);
-            if (!restraint || restraint->has_moving_parameters() || bias->is_enabled(colvardeps::f_cvb_calc_ti_samples))
+        const auto* restraint = dynamic_cast<const colvarbias_restraint_moving*>(bias);
+        if (!restraint || restraint->has_moving_parameters() || bias->is_enabled(colvardeps::f_cvb_calc_ti_samples)) {
+            adaptiveBiases.push_back(bias);
+            if (barostat)
                 throw OpenMMException("OpenMM Colvars supports only static restraints with a Monte Carlo barostat: "
                                       "trial evaluations cannot commit adaptive history for bias " + bias->name);
         }
     }
-    result = cvmodule->setup_input();
-    result |= cvmodule->setup_output();
+    requiresConsecutiveSteps_ = !adaptiveBiases.empty();
+    cvm::restart_info restart;
+    result = cvmodule->setup_input(&restart);
     if (result || cvmodule->get_error()) throw OpenMMException("Colvars initialization: " + get_error_msgs());
     restartPending_ = cvmodule->has_loaded_state();
+    if (restartPending_) {
+        // The first evaluation will reuse the saved bias. A partially
+        // matched file must not silently initialize adaptive histories to zero.
+        if (!cvmodule->variables()->empty() && restart.variables.empty())
+            throw OpenMMException("Colvars restart contains no matching collective variable");
+        for (auto* bias : adaptiveBiases) {
+            if (std::find(restart.biases.begin(), restart.biases.end(), bias) == restart.biases.end())
+                throw OpenMMException("Colvars restart is missing adaptive bias " + bias->name);
+            for (auto* cv : *bias->variables())
+                if (std::find(restart.variables.begin(), restart.variables.end(), cv) == restart.variables.end())
+                    throw OpenMMException("Colvars restart is missing collective variable " + cv->name +
+                                          " for adaptive bias " + bias->name);
+        }
+        if (restart.has_timestep) set_integration_timestep(restart.timestep);
+    }
+    result = cvmodule->setup_output();
+    if (result || cvmodule->get_error()) throw OpenMMException("Colvars initialization: " + get_error_msgs());
     initialized_ = true;
 }
 
@@ -263,8 +285,21 @@ void colvarproxy_openmm::beginEvaluation(ContextImpl& context) {
         initialOpenmmStep_ = currentStep_;
         initialColvarsStep_ = restartPending_ ? cvmodule->it_restart : currentStep_;
     }
-    cvmodule->it = initialColvarsStep_ + (currentStep_ - initialOpenmmStep_);
     const double timestepFs = 1000.0 * context.getIntegrator().getStepSize();
+    if (!std::isfinite(timestepFs))
+        throw OpenMMException("OpenMM Colvars requires a finite integration timestep in fs");
+    // A checkpoint can map a small OpenMM count onto a much later Colvars
+    // step. Both the absolute and the relative step must fit in step_number.
+    const auto elapsed = static_cast<std::uint64_t>(currentStep_) - static_cast<std::uint64_t>(initialOpenmmStep_);
+    constexpr auto maxStep = std::numeric_limits<cvm::step_number>::max();
+    if (elapsed > static_cast<std::uint64_t>(maxStep) ||
+        initialColvarsStep_ > maxStep - static_cast<cvm::step_number>(elapsed))
+        throw OpenMMException("OpenMM step count exceeds the representable Colvars step range");
+    if (requiresConsecutiveSteps_ && haveStep_ && currentStep_ > lastUpdatedStep_ &&
+        currentStep_ - 1 != lastUpdatedStep_)
+        throw OpenMMException("History-dependent Colvars biases require evaluation on consecutive OpenMM steps; "
+                              "include the Colvars force group on each integration step");
+    cvmodule->it = initialColvarsStep_ + static_cast<cvm::step_number>(elapsed);
     if (timestepFs != lastTimestepFs_) {
         set_integration_timestep(timestepFs);
         if (cvmodule->update_engine_parameters())
@@ -281,6 +316,15 @@ double colvarproxy_openmm::evaluateColvars() {
     // The step saved in a restart has already updated its adaptive history.
     // Its first evaluation restores current forces without depositing again.
     const bool advance = haveStep_ ? currentStep_ != lastUpdatedStep_ : !restartPending_;
+    if (!haveStep_ && advance && currentStep_ != 0) {
+        // A caller can set the starting OpenMM step after creating the Context.
+        cvmodule->set_initial_step(currentStep_);
+        for (auto* bias : cvmodule->biases) {
+            auto* restraint = dynamic_cast<colvarbias_restraint_moving*>(bias);
+            if (restraint && restraint->has_moving_parameters())
+                restraint->set_schedule_start_step(cvmodule->it);
+        }
+    }
     const int result = cvmodule->calc(advance);
     if (result || cvmodule->get_error()) throw OpenMMException("Colvars evaluation: " + get_error_msgs());
     haveStep_ = true;
@@ -318,6 +362,8 @@ double colvarproxy_openmm::getColvarValue(const std::string& name) const {
 }
 std::string colvarproxy_openmm::getBiasState() {
     OpenMMColvarsLock lock(this);
+    if (!haveStep_ && !restartPending_)
+        throw OpenMMException("Evaluate energy or forces before saving Colvars state");
     std::string result;
     if (cvmodule->write_restart_string(result)) throw OpenMMException("Cannot serialize Colvars state");
     return result;

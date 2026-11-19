@@ -39,14 +39,23 @@ python openmm/examples/minimal.py --platform Reference
 python openmm/examples/minimal.py --platform CPU
 ```
 
-CMake detects the headers and libraries shipped with the active pip OpenMM
-installation, or the active conda prefix. If needed, pass
-`-DOPENMM_ROOT=/path/to/openmm/prefix`, where that prefix contains `include/`
-and `lib/`. To run directly from the build without installing:
+CMake searches the selected Python's wheel and environment for OpenMM
+headers, then resolves the core library and CUDA plugin in that SDK.
+`-DOPENMM_ROOT=/path/to/openmm/prefix` selects a prefix explicitly and
+takes precedence when reconfiguring an existing build. For a split SDK,
+leave the root unset and supply `OPENMM_INCLUDE_DIR`, `OPENMM_LIBRARY`
+and, for CUDA, `OPENMM_CUDA_LIBRARY`. Use matching headers, libraries and
+runtime binaries. A C++-only build can use `-DOPENMM_COLVARS_BUILD_PYTHON=OFF`.
+To run the Python example directly from the build:
 
 ```bash
 PYTHONPATH="$PWD/build-openmm/python" python openmm/examples/minimal.py --platform Reference
 ```
+
+The Python bindings share OpenMM Force and Context pointers through SWIG.
+Use `-DSWIG_EXECUTABLE=/path/to/swig` when the OpenMM Python module
+requires a particular SWIG runtime ABI. The local OpenMM 8.6.1 checks
+used SWIG 4.5.1.
 
 The convenience script `openmm/scripts/build_install.sh` runs configuration,
 build, and installation. It accepts extra CMake arguments and uses
@@ -274,6 +283,9 @@ only at the first evaluation for each OpenMM step count. Later evaluations
 apply the same bias state to the current CV. They do not deposit additional
 metadynamics hills, advance a moving restraint, or duplicate trajectory output.
 Force-group queries that exclude `ColvarsForce` do not update it.
+Each Context retains the force group selected when it was created.
+After changing the System's force group, create or reinitialize the Context
+to apply it; save adaptive state before reinitialization.
 
 Built-in Monte Carlo barostats can evaluate a trial box and then discard it.
 Use fixed-center, fixed-strength restraints or static walls with these
@@ -303,6 +315,18 @@ OpenMM interface. Reference/CPU force group 31 is rejected because the OpenMM
 `CustomCPPForce` implementation uses a signed shift; use groups 0–30 there.
 CUDA uses an unsigned mask and accepts group 31.
 
+**Repeated CUDA initialization failures in OpenMM 8.6.1.** On the tested
+Windows RTX 5070 Ti, repeatedly constructing CUDA Contexts with an invalid
+force grew device memory by about 195 MiB per rejection. The 40th attempt
+could no longer load the device. Bare OpenMM reproduced this with an
+invalid `CustomExternalForce` expression. A separate control completed
+45 successful Context creation/destruction cycles. OpenMM allocates its
+Context implementation before initializing forces, and the constructor
+has no cleanup for an exception from that initialization. Run batches of
+expected CUDA construction failures in short-lived processes so the driver
+can reclaim their allocations on exit.
+[OpenMM 8.6.1 Context constructor](https://github.com/openmm/openmm/blob/b399af4725573963b46d6c1083fdcf7a37615857/openmmapi/src/Context.cpp#L39-L61)
+
 Colvars' existing file-based `multipleReplicas` protocol remains available.
 Local tests cover the overlap between a replaced replica state and its old
 hill buffer, acceptance of genuinely new hills, and initially empty states.
@@ -313,13 +337,26 @@ cannot be combined with `multipleReplicas`.
 Colvars `timeStepFactor` must be 1 for every CV and bias. Larger factors use
 Colvars-specific impulse scaling and sleeping-CV bookkeeping that this OpenMM
 callback cannot honor for arbitrary energy/force queries; they are rejected
-at initialization. Configure multiple time stepping through the OpenMM
-integrator's force groups instead, with Colvars `timeStepFactor` left at 1.
+at initialization. Static restraints may use an OpenMM integrator's
+multiple-time-step force groups. After the first evaluation, include a
+history-dependent bias on every OpenMM step. The next evaluation rejects
+a skipped step because its missing geometry can affect hills, moving-wall
+work, or stage averages. Repeated queries at an already evaluated step are
+supported.
 
 Rewinding the step counter of a live context is rejected. Restart an adaptive
 run by creating a new context with the required OpenMM state and a matching
 Colvars restart supplied via `setRestartInputPrefix(...)`. OpenMM checkpoints
 alone do not serialize this plugin's adaptive history.
+
+For a fresh Context, evaluate the Colvars force group before calling
+`getBiasState()`. A Context with a loaded restart can immediately export
+its saved state. An unrepresentable step offset or nonfinite integration
+timestep raises an exception before a new bias update.
+For a fresh moving restraint the schedule starts at the first evaluated
+OpenMM step, including when the caller sets a nonzero initial step count.
+Restarts retain the saved schedule origin, time step metadata and adaptive
+history. Supply a complete state for each active adaptive bias and its CVs.
 
 The first evaluation after loading a Colvars state (including a state supplied
 by `defaultInputStateFile`) represents the already evaluated saved step. It
@@ -368,10 +405,17 @@ with events linking the existing Colvars per-group streams.
 | --- | --- |
 | CUDA with Colvars GPU atom groups / supported GPU CVs | Selected coordinates are gathered device-to-device; group/CV results required by the host bias are copied to host; small bias force coefficients return to the device. Atomic bias forces are accumulated on-device. |
 | A CPU CV component within a GPU-enabled configuration | Existing Colvars fallback may copy that component's atom-group coordinates/gradients between host and device. The backend diagnostic lists CPU components. This is not an all-device CV calculation. |
-| Distance CV in the minimal example and benchmark | The CPU distance component reads the GPU-computed group centers. For unfitted COM components the bridge omits the extra per-atom position download. CPU-computed gradients still travel to the device. Native RMSD and coordination-number kernels in this branch use the device CV path. |
-| CUDA with `setUseGpu(False)` | Downloads `3*M*sizeof(double) = 24*M` bytes of selected positions; force requests upload `24*M` bytes of selected forces. Energy-only requests do not upload atomic forces. |
+| Distance CV in the minimal example and benchmark | The CPU component reads GPU-computed group centers and supplies a center force for each group. The GPU distributes these forces by mass. Native RMSD and coordination-number components evaluate their CVs on the device. |
+| CUDA with `setUseGpu(False)` | Downloads `3*M*sizeof(double) = 24*M` bytes of selected positions. The adapter uploads `24*M` bytes of forces when OpenMM sets `includeForces`. A Python energy query may also request forces for the integrator's kinetic-energy calculation. |
 | Bias algorithms | Bias state and bias energy/force coefficients are currently evaluated on the CPU, including harmonic restraints and metadynamics. |
 
+Unfitted groups used exclusively by host components that consume centers can
+reduce directly from the selected device coordinates using their group atom
+indices. Components that need individual positions retain their group buffers.
+For an eligible single scalar component, the host supplies the three
+components of the center force in mapped memory. A device kernel distributes
+it over the group's atoms using resident mass fractions. Fitted groups and
+components with individual atomic gradients retain their full gradient path.
 Existing GPU group reductions require host waits before a CPU bias consumes
 their results. Thus `CUDA/ColvarsGPU` denotes the device-coordinate and force
 path, not a claim of a fully asynchronous, wholly device-resident bias. The
@@ -408,6 +452,11 @@ pair-list invalidation after coordinate and box changes.
 RMSD cases compare against independent Kabsch fits and finite-difference forces,
 including nonzero fitting derivatives. Dipole cases check required explicit
 charges, sparse charge/index mapping, and analytical bias energies/forces.
+The center reduction tests use overlapping, unequal-sized groups with
+massless particles and multiple CUDA reduction blocks. The restart tests
+cover skipped adaptive evaluations, nonzero schedule origins, invalid clocks,
+missing CV or adaptive-bias blocks, and state export before the first
+restored evaluation.
 Analytical tests print actual values, expected values, backend, precision and
 maximum force error as JSON when run with `-s`.
 
@@ -431,6 +480,8 @@ It measures a pure-OpenMM baseline, the Colvars GPU path, and the compact
 Colvars CPU path **on the same CUDA platform**. It warms up before timing,
 synchronizes at the boundaries, performs three measurements, and records GPU
 properties, throughput, individual elapsed times and configuration as JSON.
+Biased runs also record the SHA-256 of the loaded Python extension. The
+checkout commit alone can identify several different locally built binaries.
 
 ```bash
 python openmm/examples/benchmark.py \
@@ -446,28 +497,23 @@ modes with the same nonzero report interval. `ns/day = steps/s * dt_ps * 86.4`.
 This microbenchmark does not predict throughput for a solvated protein or a
 different CV. It deliberately fails if CUDA is unavailable.
 
-Profile the modes separately, keeping all other arguments unchanged:
-
-For steady-state counts, install the Python `nvtx` package, add
-`--profile-range` to the benchmark, and add `--capture-range=nvtx`,
-`--cuda-graph-trace=node` and `--nvtx-capture=integrate@openmm-colvars-benchmark`
-to `nsys profile`. Node-level tracing includes copies and kernels inside graphs.
-This brackets the timed integration and its final synchronization. Run
-baseline, gpu and cpu with exactly one profiled repeat each.
+Install the Python `nvtx` package for steady-state profiling. The following
+command traces each mode from the start of the timed integration through its
+final energy query. Node-level tracing includes copies and kernels inside
+CUDA graphs.
 
 ```bash
-nsys profile --trace=cuda,nvtx,osrt --sample=none -o colvars-gpu \
-  python openmm/examples/benchmark.py --modes gpu \
-  --particles 32768 --group-size 128 --warmup 1000 --steps 10000 --repeats 1 \
-  --json benchmark-profile-gpu.json
-
-nsys profile --trace=cuda,nvtx,osrt --sample=none -o colvars-cpu \
-  python openmm/examples/benchmark.py --modes cpu \
-  --particles 32768 --group-size 128 --warmup 1000 --steps 10000 --repeats 1 \
-  --json benchmark-profile-cpu.json
-
-nsys stats --report cuda_api_sum,cuda_gpu_kern_sum,cuda_gpu_mem_time_sum colvars-gpu.nsys-rep
-nsys stats --report cuda_api_sum,cuda_gpu_kern_sum,cuda_gpu_mem_time_sum colvars-cpu.nsys-rep
+export NSYS_NVTX_PROFILER_REGISTER_ONLY=0
+for mode in baseline gpu cpu
+do
+  nsys profile --trace=cuda,nvtx --sample=none --cuda-graph-trace=node \
+    --capture-range=nvtx --capture-range-end=stop \
+    --nvtx-capture=integrate@openmm-colvars-benchmark --export=sqlite -o "colvars-$mode" \
+    python openmm/examples/benchmark.py --modes "$mode" --device 0 --precision mixed \
+    --particles 32768 --group-size 128 --warmup 1000 --steps 10000 --repeats 1 \
+    --report-interval 0 --profile-range --json "benchmark-profile-$mode.json"
+  nsys stats --report cuda_api_sum,cuda_gpu_kern_sum,cuda_gpu_mem_size_sum "colvars-$mode.nsys-rep"
+done
 ```
 
 Inspect the steady-state interval after warmup in the Nsight timeline. Check
@@ -475,9 +521,22 @@ for full-system coordinate/force copies, per-step device allocation, selected
 group transfers, and time spent in synchronization APIs. Compare the repeated
 kernel and copy sequence with the table above. Kernel names include
 `gatherColvarsPositions` and `addColvarsForces`, together with the reused
-Colvars kernels. Include a `--modes baseline` profile when attributing waits
-to OpenMM versus the Colvars adapter. Do not compare profiled throughput to
-unprofiled throughput.
+Colvars kernels. In the distance benchmark, `atoms_calc_cog_com_kernel`
+reduces selected positions and `apply_center_force_to_proxy_kernel` applies
+each group force. Explicit memcpy counters exclude device accesses to
+mapped host memory. The unprofiled runs provide wall-clock throughput.
+
+The `chinfo-cuda-final` records cover the revised center-force path. The
+`chinfo-cuda-indexed-centers` records cover the intermediate version that
+still uploaded per-atom gradients. The `rtx5070ti-*` records and the
+previously reported 8.66% change describe the earlier coordinate-download
+optimization. The validation report identifies the build and comparison for
+each measurement. The two final timing series produced different orderings
+for the GPU and compact CPU modes on the same distance benchmark.
+[First final timings](validation/chinfo-cuda-final.json) ·
+[Repeat timings](validation/chinfo-cuda-repeat.json) ·
+[Final trace counts](validation/chinfo-cuda-profile-final.json) ·
+[Validation report](VALIDATION.md)
 
 For a short CPU-only harness smoke test (not a GPU performance result):
 

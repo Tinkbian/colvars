@@ -134,6 +134,7 @@ int change_one_coordinate(
 template <int BLOCK_SIZE, bool b_cog, bool b_com, bool save_cog>
 __global__ void atoms_calc_cog_com_kernel(
   const cvm::real* __restrict atoms_mass,
+  const int* __restrict position_index,
   const cvm::real* __restrict atoms_pos_x_ag,
   const cvm::real* __restrict atoms_pos_y_ag,
   const cvm::real* __restrict atoms_pos_z_ag,
@@ -157,15 +158,16 @@ __global__ void atoms_calc_cog_com_kernel(
   cvm::rvector cog{0, 0, 0};
   cvm::rvector com{0, 0, 0};
   while (i < num_atoms) {
+    const unsigned int pos = position_index ? position_index[i] : i;
     if (b_cog) {
-      cog.x += atoms_pos_x_ag[i];
-      cog.y += atoms_pos_y_ag[i];
-      cog.z += atoms_pos_z_ag[i];
+      cog.x += atoms_pos_x_ag[pos];
+      cog.y += atoms_pos_y_ag[pos];
+      cog.z += atoms_pos_z_ag[pos];
     }
     if (b_com) {
-      com.x += atoms_mass[i] * atoms_pos_x_ag[i];
-      com.y += atoms_mass[i] * atoms_pos_y_ag[i];
-      com.z += atoms_mass[i] * atoms_pos_z_ag[i];
+      com.x += atoms_mass[i] * atoms_pos_x_ag[pos];
+      com.y += atoms_mass[i] * atoms_pos_y_ag[pos];
+      com.z += atoms_mass[i] * atoms_pos_z_ag[pos];
     }
     i += gridSize;
   }
@@ -257,15 +259,18 @@ int atoms_calc_cog_com(
   unsigned int* tbcount,
   cudaGraphNode_t& node,
   cudaGraph_t& graph,
-  const std::vector<cudaGraphNode_t>& dependencies) {
+  const std::vector<cudaGraphNode_t>& dependencies,
+  const int* position_index, unsigned int position_stride) {
   const unsigned int block_size = default_block_size;
   unsigned int num_blocks = (num_atoms + block_size - 1) / block_size;
   num_blocks = std::min(default_reduce_max_num_blocks, num_blocks);
   const cvm::real* atoms_pos_x_ag = atoms_pos_ag;
-  const cvm::real* atoms_pos_y_ag = atoms_pos_x_ag + num_atoms;
-  const cvm::real* atoms_pos_z_ag = atoms_pos_y_ag + num_atoms;
+  const unsigned int stride = position_index ? position_stride : num_atoms;
+  const cvm::real* atoms_pos_y_ag = atoms_pos_x_ag + stride;
+  const cvm::real* atoms_pos_z_ag = atoms_pos_y_ag + stride;
   void* args[] =
     {&atoms_mass,
+     &position_index,
      &atoms_pos_x_ag,
      &atoms_pos_y_ag,
      &atoms_pos_z_ag,
@@ -318,12 +323,14 @@ int atoms_calc_cog(
   const cvm::real* atoms_pos_y_ag = atoms_pos_x_ag + num_atoms;
   const cvm::real* atoms_pos_z_ag = atoms_pos_y_ag + num_atoms;
   const cvm::real* atoms_mass = nullptr;
+  const int* position_index = nullptr;
   const cvm::rvector* d_com_tmp = nullptr;
   const cvm::rvector* d_com_out = nullptr;
   const cvm::rvector* h_com_out = nullptr;
   cvm::real total_mass = 0.0;
   void* args[] =
     {&atoms_mass,
+     &position_index,
      &atoms_pos_x_ag,
      &atoms_pos_y_ag,
      &atoms_pos_z_ag,
@@ -471,6 +478,35 @@ __global__ void apply_colvar_force_to_proxy_kernel(
     atomicAdd(&(atoms_applied_force_y_proxy[proxy_index]), fy);
     atomicAdd(&(atoms_applied_force_z_proxy[proxy_index]), fz);
   }
+}
+
+__global__ void apply_center_force_to_proxy_kernel(
+  const int* __restrict atoms_proxy_index, cvm::real* __restrict proxy_force,
+  const cvm::real* __restrict weights, const cvm::rvector* __restrict center_force,
+  unsigned int num_atoms, unsigned int proxy_stride) {
+  const unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+  if (i < num_atoms) {
+    const unsigned int atom = atoms_proxy_index[i];
+    atomicAdd(&proxy_force[atom], weights[i] * center_force->x);
+    atomicAdd(&proxy_force[atom + proxy_stride], weights[i] * center_force->y);
+    atomicAdd(&proxy_force[atom + 2 * proxy_stride], weights[i] * center_force->z);
+  }
+}
+
+int apply_center_force_to_proxy(
+  const int* atoms_proxy_index, cvm::real* proxy_force,
+  const cvm::real* weights, const cvm::rvector* center_force,
+  unsigned int num_atoms, unsigned int proxy_stride, cudaGraphNode_t& node,
+  cudaGraph_t& graph, const std::vector<cudaGraphNode_t>& dependencies) {
+  void* args[] = {&atoms_proxy_index, &proxy_force, &weights, &center_force,
+                  &num_atoms, &proxy_stride};
+  cudaKernelNodeParams params = {};
+  params.func = (void*)apply_center_force_to_proxy_kernel;
+  params.gridDim = dim3((num_atoms + default_block_size - 1) / default_block_size, 1, 1);
+  params.blockDim = dim3(default_block_size, 1, 1);
+  params.kernelParams = args;
+  return checkGPUError(cudaGraphAddKernelNode(&node, graph, dependencies.data(),
+                                              dependencies.size(), &params));
 }
 
 int apply_main_colvar_force_to_proxy(

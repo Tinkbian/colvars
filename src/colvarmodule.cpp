@@ -1583,6 +1583,12 @@ int colvarmodule::reset()
 
 int colvarmodule::setup_input()
 {
+  return setup_input(nullptr);
+}
+
+int colvarmodule::setup_input(restart_info *info)
+{
+  if (info) *info = restart_info{};
   if (proxy->input_prefix().empty() && (!proxy->input_stream_exists("input state string")) &&
       input_state_buffer_.empty()) {
     // If no input sources have been defined up to this point, use defaultInputStateFile
@@ -1630,10 +1636,10 @@ int colvarmodule::setup_input()
     if (binary_state_file) {
       this->log("Loading state from binary file \"" + restart_in_name + "\".\n");
       // TODO integrate istream.read() into memory_stream to avoid copying
-      auto *buf = new unsigned char[file_size];
-      if (input_is->read(reinterpret_cast<char *>(buf), file_size)) {
-        cvm::memory_stream mem_is(file_size, buf);
-        if (!read_state(mem_is)) {
+      std::vector<unsigned char> buf(file_size);
+      if (input_is->read(reinterpret_cast<char *>(buf.data()), file_size)) {
+        cvm::memory_stream mem_is(file_size, buf.data());
+        if (!read_state(mem_is, info)) {
           input_is->setstate(std::ios::failbit);
           this->error("Error: cannot interpret contents of binary file \"" + restart_in_name +
                          "\".\n",
@@ -1643,10 +1649,9 @@ int colvarmodule::setup_input()
         this->error("Error: cannot read from binary file \"" + restart_in_name + "\".\n",
                    COLVARS_INPUT_ERROR);
       }
-      delete[] buf;
     } else {
       this->log("Loading state from text file \"" + restart_in_name + "\".\n");
-      read_state(*input_is);
+      read_state(*input_is, info);
     }
     this->log(line_marker);
 
@@ -1669,7 +1674,7 @@ int colvarmodule::setup_input()
 
     this->log(line_marker);
     this->log("Loading state from formatted string.\n");
-    read_state(proxy->input_stream("input state string"));
+    read_state(proxy->input_stream("input state string"), info);
     this->log(line_marker);
 
     proxy->delete_input_stream("input state string");
@@ -1679,7 +1684,7 @@ int colvarmodule::setup_input()
     this->log(line_marker);
     this->log("Loading state from unformatted memory.\n");
     cvm::memory_stream ms(input_state_buffer_.size(), input_state_buffer_.data());
-    read_state(ms);
+    read_state(ms, info);
     this->log(line_marker);
 
     input_state_buffer_.clear();
@@ -1749,18 +1754,22 @@ std::string colvarmodule::state_file_prefix(char const *filename)
 }
 
 
-template <typename IST> IST & colvarmodule::read_state_template_(IST &is)
+template <typename IST> IST & colvarmodule::read_state_template_(IST &is, restart_info *info)
 {
   bool warn_total_forces = false;
+  bool has_step = false;
 
   {
     // read global restart information
     std::string restart_conf;
     if (is >> colvarparse::read_block("configuration", &restart_conf)) {
 
-      parse->get_keyval(restart_conf, "step",
-                        it_restart, static_cast<step_number>(0),
-                        colvarparse::parse_restart);
+      has_step = parse->get_keyval(restart_conf, "step", it_restart, static_cast<step_number>(0),
+                                   colvarparse::parse_restart);
+      if (info) {
+        info->has_timestep = parse->get_keyval(restart_conf, "dt", info->timestep,
+                                               0.0, colvarparse::parse_silent);
+      }
 
       if (it_restart % proxy->time_step_factor() != 0) {
         error("the step number contained in the state file is not divisible by the "
@@ -1819,7 +1828,12 @@ template <typename IST> IST & colvarmodule::read_state_template_(IST &is)
 
   print_total_forces_errning(warn_total_forces);
 
-  read_objects_state(is);
+  if (info && !has_step) {
+    error("Restart requires a configuration block with a saved step.\n", COLVARS_INPUT_ERROR);
+    is.setstate(std::ios::failbit);
+    return is;
+  }
+  read_objects_state(is, info);
 
   if (get_error() == COLVARS_OK && (is || (is.rdstate() & std::ios::eofbit))) {
     state_loaded_ = true;
@@ -1831,18 +1845,28 @@ template <typename IST> IST & colvarmodule::read_state_template_(IST &is)
 
 std::istream & colvarmodule::read_state(std::istream &is)
 {
-  return read_state_template_<std::istream>(is);
+  return read_state(is, nullptr);
+}
+
+std::istream & colvarmodule::read_state(std::istream &is, restart_info *info)
+{
+  return read_state_template_<std::istream>(is, info);
 }
 
 
 cvm::memory_stream &colvarmodule::read_state(cvm::memory_stream &is)
+{
+  return read_state(is, nullptr);
+}
+
+cvm::memory_stream &colvarmodule::read_state(cvm::memory_stream &is, restart_info *info)
 {
   uint32_t file_magic_number = 0;
   if (!(is >> file_magic_number)) {
     return is;
   }
   if (file_magic_number == colvars_magic_number) {
-    return read_state_template_<cvm::memory_stream>(is);
+    return read_state_template_<cvm::memory_stream>(is, info);
   } else {
     is.setstate(std::ios::failbit);
     this->error("Error: magic number of binary file (" +
@@ -1872,6 +1896,11 @@ int colvarmodule::set_input_state_buffer(std::vector<unsigned char> &buf)
 
 std::istream & colvarmodule::read_objects_state(std::istream &is)
 {
+  return read_objects_state(is, nullptr);
+}
+
+std::istream & colvarmodule::read_objects_state(std::istream &is, restart_info *info)
+{
   auto pos = is.tellg();
   std::string word;
 
@@ -1879,7 +1908,6 @@ std::istream & colvarmodule::read_objects_state(std::istream &is)
     pos = is.tellg();
 
     if (is >> word) {
-
       is.seekg(pos);
 
       if (word == "colvar") {
@@ -1894,8 +1922,10 @@ std::istream & colvarmodule::read_objects_state(std::istream &is)
                            " in stream.\n",
                        COLVARS_INPUT_ERROR);
           }
-          if (is.tellg() > pos)
+          if (is.eof() || is.tellg() > pos) {
+            if (info) info->variables.push_back(*cvi);
             break; // found it
+          }
         }
         this->decrease_depth();
 
@@ -1916,17 +1946,25 @@ std::istream & colvarmodule::read_objects_state(std::istream &is)
                            this->to_str(is.tellg()) + " in stream.\n",
                        COLVARS_INPUT_ERROR);
           }
-          if (is.tellg() > pos)
+          if (is.eof() || is.tellg() > pos) {
+            if (info) info->biases.push_back(*bi);
             break; // found it
+          }
         }
         this->decrease_depth();
       }
+    } else {
+      break;
     }
 
     if (is.tellg() == pos) {
       // This block has not been read by any object: discard it, print warning and move on
       std::string conf;
       is >> colvarparse::read_block(word, &conf);
+      if (info && !is) {
+        error("Incomplete restart block for " + word + ".\n", COLVARS_INPUT_ERROR);
+        return is;
+      }
       std::string name;
       colvarparse parse_tmp(this);
       if (parse_tmp.key_lookup(conf, "name", &name)) {
@@ -1945,17 +1983,24 @@ std::istream & colvarmodule::read_objects_state(std::istream &is)
 
 cvm::memory_stream &colvarmodule::read_objects_state(cvm::memory_stream &is)
 {
+  return read_objects_state(is, nullptr);
+}
+
+cvm::memory_stream &colvarmodule::read_objects_state(cvm::memory_stream &is, restart_info *info)
+{
   // An unformatted stream must match the objects' exact configuration
   this->increase_depth();
   for (std::vector<colvar *>::iterator cvi = colvars.begin(); cvi != colvars.end(); cvi++) {
     if (!(*cvi)->read_state(is)) {
       return is;
     }
+    if (info) info->variables.push_back(*cvi);
   }
   for (std::vector<colvarbias *>::iterator bi = biases.begin(); bi != biases.end(); bi++) {
     if (!(*bi)->read_state(is)) {
       return is;
     }
+    if (info) info->biases.push_back(*bi);
   }
   this->decrease_depth();
   return is;

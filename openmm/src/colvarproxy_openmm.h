@@ -67,6 +67,7 @@ protected:
     bool usesPbc_ = false;
     std::array<OpenMM::Vec3, 3> lastBox_{};
     bool haveStep_ = false;
+    bool requiresConsecutiveSteps_ = false;
     bool restartPending_ = false;
     long long currentStep_ = 0, lastUpdatedStep_ = 0, initialOpenmmStep_ = 0;
     cvm::step_number initialColvarsStep_ = 0;

@@ -1,0 +1,153 @@
+{
+  "openmm_version": "8.6.1",
+  "openmm_git_revision": "b399af4725573963b46d6c1083fdcf7a37615857",
+  "numpy_version": "2.4.6",
+  "system": "periodic Lennard-Jones, 39.948 Da, sigma 0.34 nm, epsilon 0.997 kJ/mol, cutoff 1.0 nm",
+  "integrator": "VerletIntegrator",
+  "initial_velocity_seed": 20261118,
+  "selected_atoms_in_biased_modes": 256,
+  "cv_type": "distance",
+  "bias_type": "harmonic",
+  "configuration": {
+    "platform": "CUDA",
+    "precision": "mixed",
+    "modes": "baseline,gpu,cpu",
+    "particles": 32768,
+    "group_size": 128,
+    "timestep": 0.001,
+    "warmup": 1000,
+    "steps": 10000,
+    "repeats": 3,
+    "report_interval": 0,
+    "profile_range": false,
+    "device": "0",
+    "cpu_threads": 1,
+    "json": "openmm\\validation\\chinfo-cuda-repeat.json"
+  },
+  "results": [
+    {
+      "mode": "baseline",
+      "backend": "OpenMM only",
+      "device": {
+        "platform": "CUDA",
+        "DeviceIndex": "0",
+        "DeviceName": "NVIDIA GeForce RTX 5070 Ti",
+        "UseBlockingSync": "false",
+        "Precision": "mixed",
+        "UseCpuPme": "false",
+        "DisablePmeStream": "false",
+        "DeterministicForces": "true",
+        "nvidia_smi": [
+          "0, NVIDIA GeForce RTX 5070 Ti, 610.88, 16303 MiB"
+        ]
+      },
+      "colvars_config": null,
+      "samples_seconds": [
+        2.5041176001541317,
+        2.501199600053951,
+        2.4967851999681443
+      ],
+      "samples_steps_per_second": [
+        3993.4226728746635,
+        3998.0815604577497,
+        4005.150302928577
+      ],
+      "median_steps_per_second": 3998.0815604577497,
+      "median_ns_per_day": 345.4342468235496,
+      "mean_seconds": 2.5007008000587425,
+      "mean_steps_per_second": 3998.88484542033,
+      "range_steps_per_second": [
+        3993.4226728746635,
+        4005.150302928577
+      ],
+      "mean_ns_per_day": 345.50365064431656,
+      "throughput_relative_to_baseline": 1.0,
+      "overhead_percent": 0.0
+    },
+    {
+      "mode": "gpu",
+      "backend": "CUDA/ColvarsGPU; selected atoms=256; precision=mixed; GPU atom groups; CPU bias updates; CPU CVCs=distance/distance",
+      "device": {
+        "platform": "CUDA",
+        "DeviceIndex": "0",
+        "DeviceName": "NVIDIA GeForce RTX 5070 Ti",
+        "UseBlockingSync": "false",
+        "Precision": "mixed",
+        "UseCpuPme": "false",
+        "DisablePmeStream": "false",
+        "DeterministicForces": "true",
+        "nvidia_smi": [
+          "0, NVIDIA GeForce RTX 5070 Ti, 610.88, 16303 MiB"
+        ]
+      },
+      "colvars_config": "units gromacs\ncolvarsTrajFrequency 0\ncolvarsRestartFrequency 0\ncolvar {\n  name distance\n  width 0.1\n  distance {\n    group1 { atomNumbers 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 31 33 35 37 39 41 43 45 47 49 51 53 55 57 59 61 63 65 67 69 71 73 75 77 79 81 83 85 87 89 91 93 95 97 99 101 103 105 107 109 111 113 115 117 119 121 123 125 127 129 131 133 135 137 139 141 143 145 147 149 151 153 155 157 159 161 163 165 167 169 171 173 175 177 179 181 183 185 187 189 191 193 195 197 199 201 203 205 207 209 211 213 215 217 219 221 223 225 227 229 231 233 235 237 239 241 243 245 247 249 251 253 255 }\n    group2 { atomNumbers 2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 32 34 36 38 40 42 44 46 48 50 52 54 56 58 60 62 64 66 68 70 72 74 76 78 80 82 84 86 88 90 92 94 96 98 100 102 104 106 108 110 112 114 116 118 120 122 124 126 128 130 132 134 136 138 140 142 144 146 148 150 152 154 156 158 160 162 164 166 168 170 172 174 176 178 180 182 184 186 188 190 192 194 196 198 200 202 204 206 208 210 212 214 216 218 220 222 224 226 228 230 232 234 236 238 240 242 244 246 248 250 252 254 256 }\n  }\n}\nharmonic {\n  name restraint\n  colvars distance\n  centers 0.45000000000000107\n  forceConstant 0.01\n}\n",
+      "samples_seconds": [
+        4.164538099896163,
+        4.059067700058222,
+        4.040194000117481
+      ],
+      "samples_steps_per_second": [
+        2401.22668111725,
+        2463.6199095315815,
+        2475.1286694919154
+      ],
+      "median_steps_per_second": 2463.6199095315815,
+      "median_ns_per_day": 212.85676018352868,
+      "mean_seconds": 4.087933266690622,
+      "mean_steps_per_second": 2446.6584200469156,
+      "range_steps_per_second": [
+        2401.22668111725,
+        2475.1286694919154
+      ],
+      "mean_ns_per_day": 211.39128749205352,
+      "bias_state_updates": 31001,
+      "final_distance_nm": 0.5808688225931581,
+      "throughput_relative_to_baseline": 0.6162005132405343,
+      "overhead_percent": 63.471506331129056
+    },
+    {
+      "mode": "cpu",
+      "backend": "CUDA/ColvarsCPU; selected atoms=256; precision=mixed; per force evaluation D2H=6144 bytes positions, H2D=6144 bytes forces",
+      "device": {
+        "platform": "CUDA",
+        "DeviceIndex": "0",
+        "DeviceName": "NVIDIA GeForce RTX 5070 Ti",
+        "UseBlockingSync": "false",
+        "Precision": "mixed",
+        "UseCpuPme": "false",
+        "DisablePmeStream": "false",
+        "DeterministicForces": "true",
+        "nvidia_smi": [
+          "0, NVIDIA GeForce RTX 5070 Ti, 610.88, 16303 MiB"
+        ]
+      },
+      "colvars_config": "units gromacs\ncolvarsTrajFrequency 0\ncolvarsRestartFrequency 0\ncolvar {\n  name distance\n  width 0.1\n  distance {\n    group1 { atomNumbers 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 31 33 35 37 39 41 43 45 47 49 51 53 55 57 59 61 63 65 67 69 71 73 75 77 79 81 83 85 87 89 91 93 95 97 99 101 103 105 107 109 111 113 115 117 119 121 123 125 127 129 131 133 135 137 139 141 143 145 147 149 151 153 155 157 159 161 163 165 167 169 171 173 175 177 179 181 183 185 187 189 191 193 195 197 199 201 203 205 207 209 211 213 215 217 219 221 223 225 227 229 231 233 235 237 239 241 243 245 247 249 251 253 255 }\n    group2 { atomNumbers 2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 32 34 36 38 40 42 44 46 48 50 52 54 56 58 60 62 64 66 68 70 72 74 76 78 80 82 84 86 88 90 92 94 96 98 100 102 104 106 108 110 112 114 116 118 120 122 124 126 128 130 132 134 136 138 140 142 144 146 148 150 152 154 156 158 160 162 164 166 168 170 172 174 176 178 180 182 184 186 188 190 192 194 196 198 200 202 204 206 208 210 212 214 216 218 220 222 224 226 228 230 232 234 236 238 240 242 244 246 248 250 252 254 256 }\n  }\n}\nharmonic {\n  name restraint\n  colvars distance\n  centers 0.45000000000000107\n  forceConstant 0.01\n}\n",
+      "samples_seconds": [
+        4.029170899884775,
+        3.936469400068745,
+        3.692316100001335
+      ],
+      "samples_steps_per_second": [
+        2481.9001845481353,
+        2540.347449373127,
+        2708.3271662457023
+      ],
+      "median_steps_per_second": 2540.347449373127,
+      "median_ns_per_day": 219.48601962583817,
+      "mean_seconds": 3.8859854666516185,
+      "mean_steps_per_second": 2576.8582667223213,
+      "range_steps_per_second": [
+        2481.9001845481353,
+        2708.3271662457023
+      ],
+      "mean_ns_per_day": 222.64055424480856,
+      "bias_state_updates": 31001,
+      "final_distance_nm": 0.5808688225931589,
+      "throughput_relative_to_baseline": 0.635391602437014,
+      "overhead_percent": 55.39585809547207
+    }
+  ],
+  "source_checkout_commit": "585762a039665a344670d4678c88ee8e214002a2",
+  "tested_extension_sha256": "35e64e02b444aca5ca6b9721a59743752ae93b7d560ec86145b6a0dd7634df15",
+  "cuda_runtime_version": 12090
+}

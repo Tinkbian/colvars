@@ -198,7 +198,8 @@ public:
   int add_calc_required_properties_nodes(
     const cvm::atom_group* cpu_atoms, cudaGraph_t& graph,
     std::unordered_map<std::string, cudaGraphNode_t>& nodes_map,
-    const std::vector<cudaGraphNode_t>& extra_initial_dependencies = {});
+    const std::vector<cudaGraphNode_t>& extra_initial_dependencies = {},
+    bool centers_from_proxy = false);
   /**
    * @brief Add nodes for updating the CPU buffers after the GPU calculation
    *
@@ -379,6 +380,10 @@ private:
   gpu_graph_t graph_debug;
   /// \brief For intercepting the forces applied from the CPU interface
   cvm::real* h_sum_applied_colvar_force;
+  // Mapped center force consumed by the mass-weighted kernel for unfitted
+  // scalar COM components. Other components use their full atomic gradients.
+  cvm::rvector* h_center_force = nullptr;
+  bool use_center_force = false;
   /// \brief If the CPU code path use apply_colvar_force(),
   /// this will be set to true, and then reset to false in begin_apply_force_gpu()
   bool use_apply_colvar_force;

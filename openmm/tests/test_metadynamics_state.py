@@ -122,7 +122,7 @@ def test_grid_snapshot_preserves_pending_hills_and_forces(engine, tmp_path, keep
     assert_same(evaluate(restored[0], probe, 2), expected, engine)
     # Continue both histories and eventually project pending hills. Exact
     # agreement catches lost and duplicated hills as well as stale iterators.
-    for step in (3, 100, 101):
+    for step in range(3, 102):
         assert_same(evaluate(restored[0], probe, step), evaluate(context, probe, step), engine)
     assert_same(evaluate(restored[0], center), evaluate(context, center), engine)
 

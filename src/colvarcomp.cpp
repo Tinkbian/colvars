@@ -570,8 +570,7 @@ std::vector<std::vector<int>> colvar::cvc::get_atom_lists()
 void colvar::cvc::collect_gradients(std::vector<int> const &atom_ids, std::vector<cvm::rvector> &atomic_gradients)
 {
   // Coefficient: d(a * x^n) = a * n * x^(n-1) * dx
-  cvm::real coeff = sup_coeff * cvm::real(sup_np) *
-    cvm::integer_power(value().real_value, sup_np-1);
+  cvm::real const coeff = sup_coeff * cvm::integer_power_derivative(value().real_value, sup_np);
 
   for (size_t j = 0; j < atom_groups.size(); j++) {
     auto &ag = *(atom_groups[j]);

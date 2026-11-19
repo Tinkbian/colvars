@@ -232,6 +232,49 @@ def test_legacy_staged_state_needs_partial_sum_inside_stage(engine, tmp_path, sa
     del original, integrator
 
 
+@pytest.mark.parametrize("staged", [False, True])
+def test_new_schedule_starts_at_first_openmm_step(engine, tmp_path, staged):
+    normal, integrator, force = make_context(engine, tmp_path / "normal", configuration(staged=staged))
+    offset, integrator2, force2 = make_context(engine, tmp_path / "offset", configuration(staged=staged))
+    for step in range(13):
+        normal.setStepCount(step)
+        offset.setStepCount(2000 + step)
+        assert_equal(state_values(offset), state_values(normal), engine)
+        original = schedule_state(force, normal)
+        shifted = schedule_state(force2, offset)
+        assert shifted.pop("firstStep") == (2000,)
+        original.pop("firstStep")
+        assert shifted == original
+
+
+@pytest.mark.parametrize("staged", [False, True])
+def test_skipped_step_preserves_moving_history(engine, tmp_path, staged):
+    context, integrator, force = make_context(engine, tmp_path / "skipped", configuration(staged=staged))
+    state_values(context)
+    saved = force.getBiasState(context)
+    context.setStepCount(1)
+    state_values(context, groups={1})  # This restraint is in group zero.
+    context.setStepCount(2)
+    with pytest.raises(mm.OpenMMException, match="consecutive OpenMM steps"):
+        state_values(context)
+    assert force.getBiasState(context) == saved
+    assert force.getBiasUpdateCount(context) == 1
+    context.setStepCount(1)
+    state_values(context)
+    assert force.getBiasUpdateCount(context) == 2
+
+
+@pytest.mark.parametrize("first", [-5, 2**63 - 4])
+def test_spring_ramp_work_uses_elapsed_steps(engine, tmp_path, first):
+    context, integrator, force = make_context(engine, tmp_path / "spring", configuration("spring-k"))
+    for elapsed in range(3):
+        context.setStepCount(first + elapsed)
+        energy, _ = state_values(context)
+        np.testing.assert_allclose(energy, 12.5 + 1.25*elapsed, rtol=0, atol=engine.tolerances[1])
+        work, = schedule_state(force, context)["accumulatedWork"]
+        np.testing.assert_allclose(work, 1.25*elapsed, rtol=0, atol=engine.tolerances[1])
+
+
 def test_single_moving_wall_does_no_work_inside_the_wall(engine, tmp_path):
     context, integrator, force = make_context(engine, tmp_path / "inside", configuration(), distance=0.2)
     for step in range(12):

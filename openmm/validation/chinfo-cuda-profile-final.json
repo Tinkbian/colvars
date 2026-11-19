@@ -1,0 +1,210 @@
+{
+  "openmm_version": "8.6.1",
+  "profiler": "Nsight Systems 2026.5.2",
+  "device": "NVIDIA GeForce RTX 5070 Ti",
+  "driver": "610.88",
+  "toolkit": "12.9",
+  "precision": "mixed",
+  "particles": 32768,
+  "selected_atoms_in_biased_modes": 256,
+  "warmup_steps": 1000,
+  "measured_steps": 10000,
+  "scope": "NVTX integrate range, includes one endpoint getState(getEnergy=True)",
+  "modes": {
+    "baseline": {
+      "measured_totals": {
+        "executed_kernels": 90010,
+        "h2d_bytes": 89128960,
+        "d2h_bytes": 83966656,
+        "explicit_cpu_sync_calls": 10099,
+        "gpu_malloc_calls": 0,
+        "gpu_free_calls": 0
+      },
+      "per_md_step": {
+        "executed_kernels": 9.001,
+        "h2d_bytes": 8912.896,
+        "d2h_bytes": 8396.6656,
+        "explicit_cpu_sync_calls": 1.0099,
+        "gpu_malloc_calls": 0.0,
+        "gpu_free_calls": 0.0
+      },
+      "kernel_instance_counts": {
+        "sortShortList2": 10001,
+        "sortBoxData": 10001,
+        "findBlocksWithInteractions": 10001,
+        "findBlockBounds": 10001,
+        "computeSortKeys": 10001,
+        "computeNonbonded": 10001,
+        "clearTwoBuffers": 10001,
+        "integrateVerletPart2": 10000,
+        "integrateVerletPart1": 10000,
+        "timeShiftVelocities": 1,
+        "reduceEnergy": 1,
+        "computeKineticEnergy": 1
+      },
+      "api_call_counts": {
+        "cuLaunchKernel": 90010,
+        "cuMemcpyDtoDAsync_v2": 10003,
+        "cuMemcpyDtoHAsync_v2": 10001,
+        "cuEventSynchronize": 10001,
+        "cuEventRecord": 10001,
+        "cuMemcpyHtoD_v2": 160,
+        "cuMemcpyDtoH_v2": 122,
+        "cuStreamSynchronize": 98
+      },
+      "api_time_ns": {
+        "cuEventSynchronize": 1215524696,
+        "cuLaunchKernel": 439874701,
+        "cuMemcpyDtoDAsync_v2": 49822029,
+        "cuMemcpyDtoHAsync_v2": 29741446,
+        "cuMemcpyDtoH_v2": 20728094,
+        "cuEventRecord": 12067882,
+        "cuMemcpyHtoD_v2": 10826318,
+        "cuStreamSynchronize": 10704232
+      },
+      "copy_bytes_by_direction": {
+        "Device-to-Device": 43061248,
+        "Device-to-Host": 83966656,
+        "Host-to-Device": 89128960
+      }
+    },
+    "gpu": {
+      "measured_totals": {
+        "executed_kernels": 150016,
+        "h2d_bytes": 89333760,
+        "d2h_bytes": 83966656,
+        "explicit_cpu_sync_calls": 30176,
+        "gpu_malloc_calls": 0,
+        "gpu_free_calls": 0
+      },
+      "per_md_step": {
+        "executed_kernels": 15.0016,
+        "h2d_bytes": 8933.376,
+        "d2h_bytes": 8396.6656,
+        "explicit_cpu_sync_calls": 3.0176,
+        "gpu_malloc_calls": 0.0,
+        "gpu_free_calls": 0.0
+      },
+      "kernel_instance_counts": {
+        "atoms_calc_cog_com_kernel": 20002,
+        "apply_center_force_to_proxy_kernel": 20002,
+        "sortShortList2": 10001,
+        "sortBoxData": 10001,
+        "gatherColvarsPositions": 10001,
+        "findBlocksWithInteractions": 10001,
+        "findBlockBounds": 10001,
+        "computeSortKeys": 10001,
+        "computeNonbonded": 10001,
+        "clearTwoBuffers": 10001,
+        "addColvarsForces": 10001,
+        "integrateVerletPart2": 10000,
+        "integrateVerletPart1": 10000,
+        "timeShiftVelocities": 1,
+        "reduceEnergy": 1,
+        "computeKineticEnergy": 1
+      },
+      "api_call_counts": {
+        "cuLaunchKernel": 110012,
+        "cudaEventRecord_v3020": 60006,
+        "cudaStreamWaitEvent_v3020": 40004,
+        "cudaGraphLaunch_v10000": 40004,
+        "cudaEventSynchronize_v3020": 20002,
+        "cuMemcpyDtoDAsync_v2": 10003,
+        "cudaMemsetAsync_v3020": 10001,
+        "cuMemcpyDtoHAsync_v2": 10001,
+        "cuEventSynchronize": 10001,
+        "cuEventRecord": 10001,
+        "cuMemcpyHtoD_v2": 240,
+        "cuStreamSynchronize": 173,
+        "cuMemcpyDtoH_v2": 122
+      },
+      "api_time_ns": {
+        "cudaEventSynchronize_v3020": 2038976182,
+        "cuLaunchKernel": 594420024,
+        "cudaGraphLaunch_v10000": 320859467,
+        "cuMemcpyDtoDAsync_v2": 61780733,
+        "cudaEventRecord_v3020": 60613537,
+        "cudaMemsetAsync_v3020": 51489631,
+        "cudaStreamWaitEvent_v3020": 46382545,
+        "cuMemcpyDtoHAsync_v2": 32908645,
+        "cuMemcpyDtoH_v2": 24527200,
+        "cuStreamSynchronize": 22717561,
+        "cuMemcpyHtoD_v2": 18862529,
+        "cuEventRecord": 12800054,
+        "cuEventSynchronize": 8871617
+      },
+      "copy_bytes_by_direction": {
+        "Device-to-Device": 43061248,
+        "Device-to-Host": 83966656,
+        "Host-to-Device": 89333760
+      }
+    },
+    "cpu": {
+      "measured_totals": {
+        "executed_kernels": 110012,
+        "h2d_bytes": 150779904,
+        "d2h_bytes": 145412800,
+        "explicit_cpu_sync_calls": 20169,
+        "gpu_malloc_calls": 0,
+        "gpu_free_calls": 0
+      },
+      "per_md_step": {
+        "executed_kernels": 11.0012,
+        "h2d_bytes": 15077.9904,
+        "d2h_bytes": 14541.28,
+        "explicit_cpu_sync_calls": 2.0169,
+        "gpu_malloc_calls": 0.0,
+        "gpu_free_calls": 0.0
+      },
+      "kernel_instance_counts": {
+        "sortShortList2": 10001,
+        "sortBoxData": 10001,
+        "gatherColvarsPositions": 10001,
+        "findBlocksWithInteractions": 10001,
+        "findBlockBounds": 10001,
+        "computeSortKeys": 10001,
+        "computeNonbonded": 10001,
+        "clearTwoBuffers": 10001,
+        "addColvarsForces": 10001,
+        "integrateVerletPart2": 10000,
+        "integrateVerletPart1": 10000,
+        "timeShiftVelocities": 1,
+        "reduceEnergy": 1,
+        "computeKineticEnergy": 1
+      },
+      "api_call_counts": {
+        "cuLaunchKernel": 110012,
+        "cudaMemcpyAsync_v3020": 20002,
+        "cuMemcpyDtoDAsync_v2": 10003,
+        "cudaStreamSynchronize_v3020": 10001,
+        "cuMemcpyDtoHAsync_v2": 10001,
+        "cuEventSynchronize": 10001,
+        "cuEventRecord": 10001,
+        "cuMemcpyHtoD_v2": 240,
+        "cuStreamSynchronize": 167,
+        "cuMemcpyDtoH_v2": 122
+      },
+      "api_time_ns": {
+        "cudaStreamSynchronize_v3020": 2330009388,
+        "cuLaunchKernel": 550769684,
+        "cudaMemcpyAsync_v3020": 89091968,
+        "cuMemcpyDtoDAsync_v2": 52201924,
+        "cuMemcpyDtoHAsync_v2": 29206902,
+        "cuStreamSynchronize": 28869979,
+        "cuMemcpyDtoH_v2": 20342125,
+        "cuMemcpyHtoD_v2": 18565293,
+        "cuEventRecord": 15175948,
+        "cuEventSynchronize": 9692305
+      },
+      "copy_bytes_by_direction": {
+        "Device-to-Device": 43061248,
+        "Device-to-Host": 145412800,
+        "Host-to-Device": 150779904
+      }
+    }
+  },
+  "source_checkout_commit": "585762a039665a344670d4678c88ee8e214002a2",
+  "tested_extension_sha256": "35e64e02b444aca5ca6b9721a59743752ae93b7d560ec86145b6a0dd7634df15",
+  "openmm_git_revision": "b399af4725573963b46d6c1083fdcf7a37615857",
+  "cuda_runtime_version": 12090
+}

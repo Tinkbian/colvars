@@ -115,6 +115,7 @@ int colvaratoms_gpu::destroy_gpu() {
   error_code |= p->deallocate_device(&calc_fit_forces_gpu_info.d_dxdC);
   error_code |= p->deallocate_device(&calc_fit_forces_gpu_info.d_tbcount);
   error_code |= p->deallocate_host(&h_sum_applied_colvar_force);
+  error_code |= p->deallocate_host(&h_center_force);
   error_code |= p->deallocate_host(&gpu_buffers.h_com);
   error_code |= p->deallocate_host(&gpu_buffers.h_cog);
   error_code |= p->deallocate_host(&gpu_buffers.h_cog_orig);
@@ -174,13 +175,29 @@ int colvaratoms_gpu::read_data_gpu(cvm::atom_group* cpu_atoms) {
              (fitted || !p->is_enabled(colvardeps::f_cvc_com_based) ||
               p->is_enabled(colvardeps::f_cvc_debug_gradient));
     });
+    // A host component using only unfitted centers never reads individual
+    // positions. Reduce directly from the proxy's compact, indexed SoA.
+    const bool centers_only = !fitted && !copy_positions && !parents.empty() &&
+      std::all_of(parents.begin(), parents.end(), [](const colvardeps* parent) {
+        return parent->get_object_type() == colvardeps::object_t::colvarcomp &&
+               parent->is_enabled(colvardeps::f_cvc_require_cpu_buffers);
+      });
+    use_center_force = centers_only && parents.size() == 1 &&
+                       parents.front()->is_enabled(colvardeps::f_cvc_explicit_gradient);
+    if (use_center_force && !h_center_force) {
+      error_code |= p->allocate_host(&h_center_force, 1);
+      if (error_code != COLVARS_OK) return error_code;
+    }
     error_code |= checkGPUError(cudaGraphCreate(&graph_read_compute.graph, 0));
     if (error_code != COLVARS_OK) return error_code;
     error_code |= add_reset_atoms_data_nodes(cpu_atoms, graph_read_compute.graph, graph_read_compute.nodes);
     if (error_code != COLVARS_OK) return error_code;
-    error_code |= add_read_positions_nodes(cpu_atoms, graph_read_compute.graph, graph_read_compute.nodes);
-    if (error_code != COLVARS_OK) return error_code;
-    error_code |= add_calc_required_properties_nodes(cpu_atoms, graph_read_compute.graph, graph_read_compute.nodes);
+    if (!centers_only) {
+      error_code |= add_read_positions_nodes(cpu_atoms, graph_read_compute.graph, graph_read_compute.nodes);
+      if (error_code != COLVARS_OK) return error_code;
+    }
+    error_code |= add_calc_required_properties_nodes(cpu_atoms, graph_read_compute.graph,
+                                                     graph_read_compute.nodes, {}, centers_only);
     if (error_code != COLVARS_OK) return error_code;
     if (copy_positions) {
       error_code |= add_update_cpu_buffers_nodes(cpu_atoms, graph_read_compute.graph, graph_read_compute.nodes);
@@ -362,7 +379,7 @@ int colvaratoms_gpu::add_read_positions_nodes(
 int colvaratoms_gpu::add_calc_required_properties_nodes(
   const cvm::atom_group* cpu_atoms, cudaGraph_t& graph,
   std::unordered_map<std::string, cudaGraphNode_t>& nodes_map,
-  const std::vector<cudaGraphNode_t>& extra_initial_dependencies) {
+  const std::vector<cudaGraphNode_t>& extra_initial_dependencies, bool centers_from_proxy) {
   int error_code = COLVARS_OK;
   // COM and COG of the main group
   if (cpu_atoms->b_dummy) {
@@ -377,13 +394,16 @@ int colvaratoms_gpu::add_calc_required_properties_nodes(
     error_code |= colvars_gpu::prepare_dependencies(
       {{"read_positions_main", true}},
       dependencies, nodes_map, "calc_cog_com_main");
+    const auto* positions = centers_from_proxy ? cvmodule->proxy->proxy_atoms_positions_gpu() : gpu_buffers.d_atoms_pos;
     error_code |= colvars_gpu::atoms_calc_cog_com(
-      gpu_buffers.d_atoms_pos, gpu_buffers.d_atoms_mass, cpu_atoms->num_atoms,
+      positions, gpu_buffers.d_atoms_mass, cpu_atoms->num_atoms,
       gpu_buffers.d_cog_tmp, gpu_buffers.d_cog, gpu_buffers.d_cog_orig,
       gpu_buffers.d_com_tmp, gpu_buffers.d_com,
       gpu_buffers.h_cog, gpu_buffers.h_com, cpu_atoms->total_mass,
       gpu_buffers.d_com_cog_tbcount,
-      calc_com_cog_main, graph, dependencies);
+      calc_com_cog_main, graph, dependencies,
+      centers_from_proxy ? gpu_buffers.d_atoms_index : nullptr,
+      centers_from_proxy ? cvmodule->proxy->get_atom_ids()->size() : cpu_atoms->num_atoms);
     nodes_map["calc_com_cog_main"] = calc_com_cog_main;
   }
 
@@ -841,7 +861,7 @@ int colvaratoms_gpu::add_apply_force_nodes(
   const bool all_require_cpu_buffers = std::all_of(parent_components.begin(), parent_components.end(), check_cvc_cpu_buffers);
   if (use_apply_colvar_force) {
     const cvm::quaternion* q = rot_gpu.initialized() ? rot_gpu.get_q() : nullptr;
-    if (any_require_cpu_buffers) {
+    if (any_require_cpu_buffers && !use_center_force) {
       cudaGraphNode_t copy_grad_to_device;
       error_code |= colvars_gpu::add_copy_node(
         cpu_atoms->atoms_grad.data(), gpu_buffers.d_atoms_grad, 3 * cpu_atoms->num_atoms,
@@ -858,14 +878,19 @@ int colvaratoms_gpu::add_apply_force_nodes(
     error_code |= colvars_gpu::prepare_dependencies(
       {{"copy_grad_to_device", true}},
       dependencies, nodes_map, "apply_main_colvar_force_to_proxy");
-    error_code |= colvars_gpu::apply_main_colvar_force_to_proxy(
-      gpu_buffers.d_atoms_index,
-      p->proxy_atoms_new_colvar_forces_gpu(),
-      gpu_buffers.d_atoms_grad,
-      h_sum_applied_colvar_force,
-      cpu_atoms->is_enabled(colvardeps::f_ag_rotate),
-      q, cpu_atoms->num_atoms, p->get_atom_ids()->size(),
-      apply_main_colvar_force_to_proxy_node, graph, dependencies);
+    if (use_center_force) {
+      error_code |= colvars_gpu::apply_center_force_to_proxy(
+        gpu_buffers.d_atoms_index, p->proxy_atoms_new_colvar_forces_gpu(),
+        gpu_buffers.d_atoms_weight, h_center_force, cpu_atoms->num_atoms,
+        p->get_atom_ids()->size(), apply_main_colvar_force_to_proxy_node, graph, dependencies);
+    } else {
+      error_code |= colvars_gpu::apply_main_colvar_force_to_proxy(
+        gpu_buffers.d_atoms_index, p->proxy_atoms_new_colvar_forces_gpu(),
+        gpu_buffers.d_atoms_grad, h_sum_applied_colvar_force,
+        cpu_atoms->is_enabled(colvardeps::f_ag_rotate),
+        q, cpu_atoms->num_atoms, p->get_atom_ids()->size(),
+        apply_main_colvar_force_to_proxy_node, graph, dependencies);
+    }
     nodes_map["apply_main_colvar_force_to_proxy"] = apply_main_colvar_force_to_proxy_node;
     if ((cpu_atoms->is_enabled(colvardeps::f_ag_center) ||
          cpu_atoms->is_enabled(colvardeps::f_ag_rotate)) &&
@@ -1130,6 +1155,11 @@ int colvaratoms_gpu::add_force_to_proxy_gpu(cvm::atom_group* cpu_atoms) {
   // instantiated, so rebuilding one every step would also leak its handle.
   if (cpu_atoms->b_dummy || (!use_apply_colvar_force && !use_group_force)) {
     return error_code;
+  }
+  if (use_center_force && use_apply_colvar_force) {
+    // read_and_calculate was host-synchronized for this CPU component, so
+    // the previous force graph has finished reading this pinned location.
+    *h_center_force = cpu_atoms->center_of_mass_scalar_gradient() * h_sum_applied_colvar_force[0];
   }
   if (!graph_apply_force.graph_exec_initialized) {
     // Create the graph if not initialized

@@ -7,6 +7,7 @@ any protein system. CUDA is required by default; no silent CPU substitution.
 
 import argparse
 from contextlib import nullcontext
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -207,7 +208,8 @@ def main():
     if args.device is not None and "," in args.device:
         parser.error("This benchmark tests a single CUDA device; --device accepts one index")
 
-    report = {"openmm_version": mm.__version__, "numpy_version": np.__version__,
+    report = {"openmm_version": mm.__version__, "openmm_git_revision": mm.version.git_revision,
+              "numpy_version": np.__version__,
               "system": "periodic Lennard-Jones, 39.948 Da, sigma 0.34 nm, epsilon 0.997 kJ/mol, cutoff 1.0 nm",
               "integrator": "VerletIntegrator", "initial_velocity_seed": 20261118,
               "selected_atoms_in_biased_modes": 2 * args.group_size,
@@ -225,6 +227,12 @@ def main():
             result = run_mode(args, mode, Path(output))
             report["results"].append(result)
             print(json.dumps(result, indent=2), flush=True)
+    # The checkout can differ from the installed module (e.g. a build of a
+    # dirty working tree). Identify the actual binary used by the biased modes.
+    if any(mode != "baseline" for mode in modes):
+        import _openmm_colvars
+        extension = Path(_openmm_colvars.__file__)
+        report["tested_extension_sha256"] = hashlib.sha256(extension.read_bytes()).hexdigest()
     baseline = next((r for r in report["results"] if r["mode"] == "baseline"), None)
     if baseline:
         for result in report["results"]:

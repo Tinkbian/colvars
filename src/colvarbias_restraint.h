@@ -116,6 +116,8 @@ public:
   virtual int change_configuration(std::string const & /* conf */) override { return COLVARS_NOT_IMPLEMENTED; }
 
   bool has_moving_parameters() const { return b_chg_centers || b_chg_force_k || b_chg_walls; }
+  /// Set the origin before the first update when an engine supplies its start step late.
+  void set_schedule_start_step(cvm::step_number step) { first_step = step; }
 
   virtual std::string const get_state_params() const override;
   virtual int set_state_params(std::string const &conf) override;
