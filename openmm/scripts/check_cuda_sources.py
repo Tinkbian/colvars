@@ -91,7 +91,7 @@ def main() -> None:
     nvrtc.nvrtcDestroyProgram.argtypes = [ctypes.POINTER(pointer)]
     nvrtc.nvrtcGetPTXSize.argtypes = [pointer, ctypes.POINTER(ctypes.c_size_t)]
     nvrtc.nvrtcGetPTX.argtypes = [pointer, ctypes.c_char_p]
-    source_file = Path(__file__).resolve().parents[1] / "src/CudaColvarsKernel.cpp"
+    source_file = Path(__file__).resolve().parents[1] / "resident/src/CudaColvarsKernel.cpp"
     adapter = re.search(r'R"CUDA\((.*?)\)CUDA"', source_file.read_text(), re.S)
     if adapter is None:
         raise RuntimeError("Could not locate the CUDA adapter source string")
@@ -107,7 +107,7 @@ def main() -> None:
             for kind, scalar in (("real", real), ("mixed", mixed))
             for width in ("", "2", "3", "4")
         )
-        defines = "#define NUM_SELECTED 4\n#define PADDED_NUM_ATOMS 64\n"
+        defines = "#define NUM_SELECTED 4\n#define PADDED_NUM_ATOMS 64\n#define LENGTH_FROM_NM 1.0\n#define FORCE_TO_OPENMM 1.0\n"
         if precision != "single":
             defines += f"#define USE_{precision.upper()}_PRECISION 1\n"
         # OpenMM's CudaContext::createModule + compileProgram use this order.

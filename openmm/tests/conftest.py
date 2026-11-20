@@ -4,7 +4,17 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 import openmm as mm
+from openmm_colvars import ColvarsForce
 import pytest
+
+
+RESIDENT = hasattr(ColvarsForce, "setUseGpu")
+
+
+def pytest_ignore_collect(collection_path, config):
+    # The other suites exercise resident-only state, diagnostics and device kernels.
+    if collection_path.name.startswith("test_") and collection_path.suffix == ".py":
+        return not RESIDENT and collection_path.name != "test_pr979_interface.py"
 
 
 def pytest_addoption(parser):
@@ -59,7 +69,7 @@ def pytest_generate_tests(metafunc):
         if name not in ("Reference", "CPU", "CUDA"):
             raise pytest.UsageError(f"Unsupported test platform {name!r}")
         precision = metafunc.config.getoption("--openmm-precision") if name == "CUDA" else "double"
-        modes = (True, False) if name == "CUDA" else (False,)
+        modes = ((True, False) if RESIDENT else (True,)) if name == "CUDA" else (False,)
         for mode in modes:
             params.append(pytest.param(Engine(name, mode, precision),
                           id=f"{name}-{'gpu' if mode else 'cpu'}-{precision}"))

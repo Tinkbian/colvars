@@ -1,99 +1,187 @@
-// Adapted from Colvars PR 979. See ../UPSTREAM.md and ../LICENSE.
 #ifndef COLVARPROXY_OPENMM_H
 #define COLVARPROXY_OPENMM_H
 
 #include "ColvarsForce.h"
-#include "colvarproxy.h"
 #include "openmm/Vec3.h"
-#include <array>
-#include <limits>
-#include <random>
-#include <mutex>
+
+#include "colvarproxy.h"
+
+#include <memory>
+#include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
-namespace OpenMM { class ContextImpl; class System; }
-namespace ColvarsPlugin { class ColvarsTABFIntegrator; }
+namespace OpenMM {
+class ContextImpl;
+class System;
+}
 
-// Colvars currently has shared feature tables and a legacy default proxy.
-// Serialize plugin entry points across OpenMM Contexts and select the active
-// proxy while holding this recursive lock. Device work itself stays asynchronous.
-class OpenMMColvarsLock {
-public:
-    explicit OpenMMColvarsLock(colvarproxy* active = nullptr);
-private:
-    std::unique_lock<std::recursive_mutex> lock_;
-};
+using OpenMM::ContextImpl;
+using OpenMM::System;
+using OpenMM::Vec3;
+using ColvarsPlugin::ColvarsForce;
 
-/** Shared host/GPU lifecycle. Construction deliberately defers parsing so a
- * CUDA subclass can establish its stream and memory policy before CV setup. */
-class colvarproxy_openmm : public colvarproxy {
+/// Colvars proxy implementation backed by an OpenMM Context.
+///
+/// The proxy owns no OpenMM objects. Context and position pointers are valid
+/// only during the current computeForce() call.
+class colvarproxy_openmm final : public colvarproxy {
 public:
-    colvarproxy_openmm(const ColvarsPlugin::ColvarsForce&, const OpenMM::System&);
+    colvarproxy_openmm(const ColvarsForce& owner, const System& system);
     ~colvarproxy_openmm() override;
-    void initializeColvars(OpenMM::ContextImpl& context);
-    int setup() override;
-    int init_atom(int atomNumber) override;
-    int request_atom_charges() override;
-    int check_atom_id(int atomNumber) override;
-    int set_unit_system(const std::string&, bool checkOnly) override;
-    void request_total_force(bool yesno) override;
-    bool total_forces_enabled() const override { return total_force_requested; }
-    bool total_forces_same_step() const override { return true; }
-    bool can_reuse_atom_pairlists() const override { return false; }
-    bool integrates_colvars_at_step_end() const override { return tabf_ != nullptr; }
-    bool replaying_colvars_endpoint() const override;
-    std::string get_integrator_state() const override;
-    void set_integrator_state(const std::string&) override;
-    int get_tabf_alpha(cvm::real*) override;
-    int get_dE_dtabf_alpha(cvm::real*) override;
-    int set_tabf_alpha(cvm::real) override;
-    int send_tabf_alpha() override;
-    double lengthFromNm() const { return 10.0 * angstrom_value_; }
-    double energyToKJ() const { return 4.184 / kcal_mol_value_; }
-    double forceToOpenMM() const { return lengthFromNm() * energyToKJ(); }
-    void add_energy(cvm::real energy) override { biasEnergy_ += energy; }
-    void log(const std::string&) override;
-    void error(const std::string&) override;
-    cvm::real rand_gaussian() override;
-    int load_atoms_pdb(const char*, cvm::atom_group&, const std::string&, double) override;
-    int load_coords_pdb(const char*, std::vector<cvm::atom_pos>&,
-                        const std::vector<int>&, const std::string&, double) override;
 
-    void beginEvaluation(OpenMM::ContextImpl& context);
-    void validateTabfStart(double alpha, long long openmmStep);
-    double evaluateColvars();
-    double calculate(OpenMM::ContextImpl&, const std::vector<OpenMM::Vec3>&);
-    void addForcesToOpenMM(std::vector<OpenMM::Vec3>&) const;
-    const std::vector<int>& requestedAtoms() const { return atoms_ids; }
-    double biasEnergy() const { return biasEnergy_; }
-    double getColvarValue(const std::string&) const;
-    long long getBiasUpdateCount() const;
-    std::string getBiasState();
-    void flushOutputs();
-    colvarmodule& module() { return *cvmodule; }
-protected:
-    const ColvarsPlugin::ColvarsForce& owner_;
-    const OpenMM::System& system_;
-    OpenMM::ContextImpl* currentContext_ = nullptr;
-    double biasEnergy_ = 0.0;
-    bool initialized_ = false;
-    ColvarsPlugin::ColvarsTABFIntegrator* tabf_ = nullptr;
-    double pendingAlpha_ = 0.0;
-    double alphaLowerBound_ = 0.0, alphaUpperBound_ = std::numeric_limits<double>::infinity();
-    bool alphaPending_ = false;
-    bool restartAlphaPending_ = false;
-    bool evaluated_ = false;
-    bool usesPbc_ = false;
-    std::array<OpenMM::Vec3, 3> lastBox_{};
-    bool haveStep_ = false;
-    bool requiresConsecutiveSteps_ = false;
-    bool restartPending_ = false;
-    long long currentStep_ = 0, lastUpdatedStep_ = 0, initialOpenmmStep_ = 0;
-    cvm::step_number initialColvarsStep_ = 0;
-    long long biasUpdateCount_ = 0;
-    double lastTimestepFs_ = -1.0;
-    std::mt19937_64 rng_;
-    std::normal_distribution<double> gaussian_{0.0, 1.0};
+    int setup() override;
+
+    int init_atom(int atomNumber) override;
+    void clear_atom(int index) override;
+    int check_atom_id(int atomNumber) override;
+
+    void request_total_force(bool yesno) override;
+    bool total_forces_enabled() const override;
+    bool total_forces_same_step() const override;
+
+    int set_unit_system(std::string const& unitsIn, bool checkOnly) override;
+
+    void add_energy(cvm::real energy) override;
+    void log(std::string const& message) override;
+    void error(std::string const& message) override;
+    cvm::real rand_gaussian() override;
+
+    int get_alch_lambda(cvm::real* lambda) override;
+    int send_alch_lambda() override;
+    int request_alch_energy_freq(int freq) override;
+    int get_dE_dlambda(cvm::real* dEdLambda) override;
+
+#ifdef OPENMM_COLVARS_HAS_TABF_ALPHA
+    int get_tabf_alpha(cvm::real* alpha) override;
+    int set_tabf_alpha(cvm::real alpha) override;
+#ifdef OPENMM_COLVARS_HAS_TABF_ALPHA_BOUNDARIES
+    int get_tabf_alpha_boundaries(cvm::real* lower, cvm::real* upper) override;
+#endif
+    int send_tabf_alpha() override;
+    int request_tabf_energy_freq(int freq);
+    int get_dE_dtabf_alpha(cvm::real* dEdAlpha) override;
+#endif
+
+    int load_atoms_pdb(char const* filename,
+                       cvm::atom_group& atoms,
+                       std::string const& pdbField,
+                       double pdbFieldValue) override;
+    int load_coords_pdb(char const* filename,
+                        std::vector<cvm::atom_pos>& positions,
+                        std::vector<int> const& sortedIds,
+                        std::string const& pdbField,
+                        double pdbFieldValue) override;
+
+    int check_replicas_enabled() override;
+    int replica_index() override;
+    int num_replicas() override;
+    void replica_comm_barrier() override;
+    int replica_comm_recv(char* msgData, int bufferLength, int sourceReplica) override;
+    int replica_comm_send(char* msgData, int messageLength, int destinationReplica) override;
+
+    int run_force_callback() override;
+    int run_colvar_callback(std::string const& name,
+                            std::vector<const colvarvalue*> const& cvcs,
+                            colvarvalue& value) override;
+    int run_colvar_gradient_callback(std::string const& name,
+                                     std::vector<const colvarvalue*> const& cvcs,
+                                     std::vector<cvm::matrix2d<cvm::real>>& gradient) override;
+
+    int updateInput(ContextImpl& context, const std::vector<Vec3>& positions);
+    double calculate(ContextImpl& context, const std::vector<Vec3>& positions);
+    void addForcesToOpenMM(std::vector<Vec3>& forces) const;
+
+    double biasEnergy() const;
+
+private:
+    void initializeColvars();
+    void updateAtomIndexMap();
+    void updatePbc(ContextImpl& context);
+    bool shouldUsePbc(ContextImpl& context) const;
+    bool resolveAutoPbcMode() const;
+    bool buildCacheKey(ContextImpl& context,
+                       const std::vector<Vec3>& positions,
+                       long long& openmmStep,
+                       bool& usesPbc,
+                       Vec3& boxA,
+                       Vec3& boxB,
+                       Vec3& boxC,
+                       double& lambdaValue,
+                       double& tabfAlphaValue,
+                       std::vector<Vec3>& requestedPositions) const;
+    bool cacheMatches(long long openmmStep,
+                      bool usesPbc,
+                      const Vec3& boxA,
+                      const Vec3& boxB,
+                      const Vec3& boxC,
+                      double lambdaValue,
+                      double tabfAlphaValue,
+                      const std::vector<Vec3>& requestedPositions) const;
+    void storeCache(long long openmmStep,
+                    bool usesPbc,
+                    const Vec3& boxA,
+                    const Vec3& boxB,
+                    const Vec3& boxC,
+                    double lambdaValue,
+                    double tabfAlphaValue);
+    void invalidateCache();
+    void updateColvarsStep(ContextImpl& context);
+    void updatePositions(const std::vector<Vec3>& positions);
+    void updateTotalForces(ContextImpl& context);
+    bool inferTotalForcesSameStep() const;
+    void clearPreviousOpenMMForces(std::vector<Vec3>& forces) const;
+    void captureLambdaDerivative(ContextImpl& context);
+    double contextParameter(ContextImpl& context, const std::string& name, double defaultValue) const;
+    void setContextParameter(ContextImpl& context, const std::string& name, double value) const;
+    double integratorGlobal(ContextImpl& context, const std::string& name, double defaultValue) const;
+    bool setIntegratorGlobal(ContextImpl& context, const std::string& name, double value) const;
+    double tabfAlpha(ContextImpl& context) const;
+
+    const ColvarsForce& owner_;
+    const System& system_;
+    ContextImpl* currentContext_;
+    double biasEnergy_;
+    bool isInitialized_;
+    mutable bool autoPbcResolved_;
+    mutable bool cachedAutoPbc_;
+    bool reportedRepeatedExtendedCoordinate_;
+    bool totalForcesSameStep_;
+    bool stepMappingInitialized_;
+    long long openmmInitialStep_;
+    cvm::step_number colvarsInitialStep_;
+    long long lastLambdaWritebackStep_;
+    long long lastTabfAlphaWritebackStep_;
+    Vec3 lastPbcA_;
+    Vec3 lastPbcB_;
+    Vec3 lastPbcC_;
+    double lastIntegrationTimestepFs_;
+    mutable std::vector<int> previousForceAtoms_;
+    std::vector<Vec3> systemForceBuffer_;
+    std::uint64_t gaussianRngState_;
+    bool gaussianRngHasSpare_;
+    cvm::real gaussianRngSpare_;
+    bool currentLambdaDerivativeValid_;
+    double currentLambdaDerivative_;
+    bool tabfAlphaBoundariesValid_;
+    cvm::real cached_tabf_alpha = 1.0;
+    bool cached_tabf_alpha_changed = false;
+    cvm::real tabfAlphaLowerBoundary_;
+    cvm::real tabfAlphaUpperBoundary_;
+
+    bool cacheValid_;
+    long long cachedOpenmmStep_;
+    bool cachedUsesPbc_;
+    Vec3 cachedPbcA_;
+    Vec3 cachedPbcB_;
+    Vec3 cachedPbcC_;
+    double cachedLambdaValue_;
+    double cachedTabfAlphaValue_;
+    double cachedBiasEnergy_;
+    std::vector<int> cachedAtomIds_;
+    std::vector<Vec3> cachedRequestedPositions_;
+    std::vector<cvm::rvector> cachedAppliedForces_;
 };
+
 #endif

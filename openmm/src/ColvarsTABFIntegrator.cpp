@@ -1,126 +1,158 @@
 #include "ColvarsTABFIntegrator.h"
-#include "ColvarsForce.h"
-#include "ColvarsForceImpl.h"
-#include "colvarproxy_openmm.h"
-#include "openmm/NonbondedForce.h"
+
 #include "openmm/OpenMMException.h"
-#include "openmm/System.h"
 #include "openmm/internal/ContextImpl.h"
-#include "openmm/internal/ForceImpl.h"
+#ifdef OPENMM_COLVARS_RESIDENT
+#include "../resident/src/colvarproxy_openmm.h"
+#endif
+
+#include <algorithm>
 #include <cmath>
-#include <regex>
-#include <string>
+#include <set>
 
 using namespace OpenMM;
 using namespace ColvarsPlugin;
 
 namespace {
-void checkAlpha(double alpha) {
-    if (!std::isfinite(alpha) || alpha <= 0)
-        throw OpenMMException("TABF alpha must be finite and positive");
-}
-double checkStepSize(double size) {
-    if (!std::isfinite(size) || size <= 0)
-        throw OpenMMException("TABF step size must be finite and positive");
-    return size;
-}
-void checkVariableName(const std::string& name) {
-    static const std::regex identifier("[a-zA-Z_][a-zA-Z_0-9]*");
-    static const std::regex reserved("x|v|m|dt|gaussian|uniform|f[0-9]*|energy[0-9]*|colvars_tabf_dE_dalpha|tabf_(kT|friction|decay|noise|unconstrained_x)");
-    if (!std::regex_match(name, identifier) || std::regex_match(name, reserved))
-        throw OpenMMException("Invalid TABF integrator variable name: "+name);
-}
+
+void validateForceGroup(int group, const std::string& name)
+{
+    if (group < 0 || group > 31) {
+        throw OpenMMException(name + " must be between 0 and 31");
+    }
 }
 
-ColvarsTABFIntegrator::ColvarsTABFIntegrator(double stepSize, double temperature,
-                                             double frictionCoeff, double initialAlpha,
-                                             int physicalForceGroup, int colvarsForceGroup,
-                                             const std::string& alpha, const std::string& derivative)
-    : CustomIntegrator(checkStepSize(stepSize)), physicalGroup_(physicalForceGroup),
-      biasGroup_(colvarsForceGroup) {
-    checkAlpha(initialAlpha);
-    if (!std::isfinite(temperature) || temperature < 0 ||
-        !std::isfinite(frictionCoeff) || frictionCoeff < 0)
-        throw OpenMMException("TABF temperature and friction must be finite and nonnegative");
-    if (physicalGroup_ < 0 || physicalGroup_ > 31 || biasGroup_ < 0 || biasGroup_ > 31 ||
-        physicalGroup_ == biasGroup_)
-        throw OpenMMException("TABF needs distinct physical and Colvars force groups in [0, 31]");
+void validateName(const std::string& name, const std::string& label)
+{
+    if (name.empty()) {
+        throw OpenMMException(label + " must not be empty");
+    }
+}
 
-    checkVariableName(alpha);
-    checkVariableName(derivative);
-    if (alpha == derivative)
-        throw OpenMMException("TABF alpha and derivative variable names must differ");
-    alphaIndex_ = addGlobalVariable(alpha, initialAlpha);
-    derivativeIndex_ = addGlobalVariable(derivative, 0);
-    addGlobalVariable("tabf_kT", 0.00831446261815324*temperature);
-    addGlobalVariable("tabf_friction", frictionCoeff);
-    addGlobalVariable("tabf_decay", 1.0);
-    addGlobalVariable("tabf_noise", 0.0);
-    addPerDofVariable("tabf_unconstrained_x", 0.0);
-    const std::string physical = std::to_string(physicalGroup_);
-    const std::string halfKick = "v+0.5*dt*f"+physical+"/(m*"+alpha+")";
+double validateStepSize(double stepSize)
+{
+    if (!std::isfinite(stepSize) || stepSize < 0.0) {
+        throw OpenMMException("stepSize must be finite and non-negative");
+    }
+    return stepSize;
+}
 
-    addComputeGlobal("tabf_decay", "exp(-tabf_friction*dt)");
-    addComputeGlobal("tabf_noise", "sqrt((1-tabf_decay)*(1+tabf_decay)*tabf_kT)");
-    addComputePerDof("v", halfKick);
+void validateFiniteNonnegative(double value, const std::string& label)
+{
+    if (!std::isfinite(value) || value < 0.0) {
+        throw OpenMMException(label + " must be finite and non-negative");
+    }
+}
+
+std::string forceVariable(int group)
+{
+    return "f" + std::to_string(group);
+}
+
+std::string energyVariable(int group)
+{
+    return "energy" + std::to_string(group);
+}
+
+} // namespace
+
+ColvarsTABFIntegrator::ColvarsTABFIntegrator(double stepSize,
+                                             double temperature,
+                                             double frictionCoeff,
+                                             double initialAlpha,
+                                             int physicalForceGroup,
+                                             int colvarsForceGroup,
+                                             const std::string& alphaVariableName,
+                                             const std::string& alphaDerivativeVariableName)
+    : CustomIntegrator(validateStepSize(stepSize)),
+      physicalForceGroup_(physicalForceGroup),
+      colvarsForceGroup_(colvarsForceGroup),
+      alphaVariableName_(alphaVariableName),
+      alphaDerivativeVariableName_(alphaDerivativeVariableName)
+{
+    validateForceGroup(physicalForceGroup_, "physicalForceGroup");
+    validateForceGroup(colvarsForceGroup_, "colvarsForceGroup");
+    if (physicalForceGroup_ == colvarsForceGroup_) {
+        throw OpenMMException("physicalForceGroup and colvarsForceGroup must be different");
+    }
+    validateName(alphaVariableName_, "alphaVariableName");
+    validateName(alphaDerivativeVariableName_, "alphaDerivativeVariableName");
+    if (alphaVariableName_ == alphaDerivativeVariableName_) {
+        throw OpenMMException("alpha variable and derivative variable names must be different");
+    }
+    static const std::set<std::string> reservedNames = {"a", "b", "kT", "x1"};
+    if (reservedNames.count(alphaVariableName_) != 0 ||
+        reservedNames.count(alphaDerivativeVariableName_) != 0) {
+        throw OpenMMException("alpha variable names must not conflict with a, b, kT, or x1");
+    }
+    validateFiniteNonnegative(temperature, "temperature");
+    validateFiniteNonnegative(frictionCoeff, "frictionCoeff");
+    if (!std::isfinite(initialAlpha) || initialAlpha <= 0.0) {
+        throw OpenMMException("initialAlpha must be finite and positive");
+    }
+
+#ifdef OPENMM_COLVARS_RESIDENT
+    configureEndpoint(temperature, frictionCoeff, initialAlpha);
+    const std::string thermostat = "tabf_decay*v+tabf_noise*gaussian/sqrt(m)";
+    const std::string unconstrained = "tabf_unconstrained_x";
+#else
+    const double a = std::exp(-frictionCoeff * stepSize);
+    const double b = std::sqrt(std::max(0.0, 1.0 - std::exp(-2.0 * frictionCoeff * stepSize)));
+
+    addGlobalVariable("a", a);
+    addGlobalVariable("b", b);
+    addGlobalVariable("kT", 0.00831446261815324 * temperature);
+    alphaIndex_ = addGlobalVariable(alphaVariableName_, initialAlpha);
+    derivativeIndex_ = addGlobalVariable(alphaDerivativeVariableName_, 0.0);
+    const std::string thermostat = "a*v + b*sqrt(kT/m)*gaussian";
+    const std::string unconstrained = "x1";
+#endif
+    addPerDofVariable(unconstrained, 0.0);
+
+    const std::string physicalForce = forceVariable(physicalForceGroup_);
+    const std::string colvarsForce = forceVariable(colvarsForceGroup_);
+    const std::string physicalEnergy = energyVariable(physicalForceGroup_);
+
+    // step() updates Context state before the scheduled Colvars force evaluation.
+
+    addComputePerDof("v", "v+0.5*dt*" + physicalForce + "/(m*" + alphaVariableName_ + ")");
     addComputePerDof("x", "x+0.5*dt*v");
-    addComputePerDof("v", "tabf_decay*v+tabf_noise*gaussian/sqrt(m)");
+    addComputePerDof("v", thermostat);
     addComputePerDof("x", "x+0.5*dt*v");
-    addComputePerDof("tabf_unconstrained_x", "x");
+    addComputePerDof(unconstrained, "x");
     addConstrainPositions();
-    addComputePerDof("v", "v+(x-tabf_unconstrained_x)/dt");
+    addComputePerDof("v", "v+(x-"+unconstrained+")/dt");
     addConstrainVelocities();
-    addComputeGlobal(derivative, "-energy"+physical+"/("+alpha+"*"+alpha+")");
-    addComputePerDof("v", halfKick);
-    // OpenMM makes changes to Context parameters visible before evaluating
-    // forces. Ordinary CustomIntegrator globals can still be stale inside a
-    // force callback on Reference. Publish after the physical half kick so
-    // the endpoint force and energy can be computed together.
-    addComputeGlobal(derivativeParameterName(), derivative);
-    addComputePerDof("v", "v+dt*f"+std::to_string(biasGroup_)+"/m");
+
+    addComputeGlobal(alphaDerivativeVariableName_,
+                     "-" + physicalEnergy + "/(" + alphaVariableName_ + "*" +
+                     alphaVariableName_ + ")");
+    addComputePerDof("v", "v+0.5*dt*" + physicalForce + "/(m*" + alphaVariableName_ + ")");
+    addComputeGlobal(derivativeParameterName(), alphaDerivativeVariableName_);
+    // Colvars owns history-dependent state (ABF counts, trajectories, alpha).
+    // Evaluate it once at the end of the MD step, then apply the full impulse.
+    addComputePerDof("v", "v+dt*" + colvarsForce + "/m");
     addConstrainVelocities();
 }
 
-void ColvarsTABFIntegrator::initialize(ContextImpl& c) {
-    int colvarsForces = 0;
-    const System& system = c.getSystem();
-    for (int i = 0; i < system.getNumForces(); ++i) {
-        const Force& force = system.getForce(i);
-        if (dynamic_cast<const ColvarsForce*>(&force)) {
-            ++colvarsForces;
-            if (force.getForceGroup() != biasGroup_)
-                throw OpenMMException("Place the ColvarsForce in the TABF integrator's Colvars force group");
-        } else {
-            if (force.getForceGroup() != physicalGroup_)
-                throw OpenMMException("Place all physical forces in the TABF integrator's physical force group");
-            if (const auto* nonbonded = dynamic_cast<const NonbondedForce*>(&force)) {
-                int reciprocal = nonbonded->getReciprocalSpaceForceGroup();
-                auto method = nonbonded->getNonbondedMethod();
-                bool usesReciprocal = method == NonbondedForce::Ewald || method == NonbondedForce::PME ||
-                                      method == NonbondedForce::LJPME;
-                if (usesReciprocal && reciprocal != -1 && reciprocal != physicalGroup_)
-                    throw OpenMMException("Place the reciprocal-space force in the TABF physical force group");
-            }
-        }
-    }
-    if (colvarsForces != 1)
-        throw OpenMMException("The TABF integrator requires exactly one ColvarsForce");
-    for (ForceImpl* impl : c.getForceImpls()) {
-        if (auto* bias = dynamic_cast<ColvarsForceImpl*>(impl)) {
-            colvars_ = &bias->proxy();
-        } else if (impl->getDefaultParameters().count(derivativeParameterName()))
-            throw OpenMMException("Another force uses the reserved TABF derivative Context parameter");
-    }
-    CustomIntegrator::initialize(c);
+int ColvarsTABFIntegrator::getPhysicalForceGroup() const
+{
+    return physicalForceGroup_;
 }
 
-void ColvarsTABFIntegrator::cleanup() {
-    colvars_ = nullptr;
-    CustomIntegrator::cleanup();
+int ColvarsTABFIntegrator::getColvarsForceGroup() const
+{
+    return colvarsForceGroup_;
 }
 
-void ColvarsTABFIntegrator::setStepSize(double size) {
-    CustomIntegrator::setStepSize(checkStepSize(size));
+const std::string& ColvarsTABFIntegrator::getAlphaVariableName() const
+{
+    return alphaVariableName_;
+}
+
+const std::string& ColvarsTABFIntegrator::getAlphaDerivativeVariableName() const
+{
+    return alphaDerivativeVariableName_;
 }
 
 double ColvarsTABFIntegrator::getAlpha() const {
@@ -134,7 +166,8 @@ double ColvarsTABFIntegrator::getAlphaDerivative() const {
 void ColvarsTABFIntegrator::setNextAlpha(double alpha) {
     if (!collectingBias_)
         throw OpenMMException("TABF alpha feedback requires a scheduled Colvars evaluation");
-    checkAlpha(alpha);
+    if (!std::isfinite(alpha) || alpha <= 0)
+        throw OpenMMException("TABF alpha must be finite and positive");
     nextAlpha_ = alpha;
 }
 
@@ -145,7 +178,9 @@ void ColvarsTABFIntegrator::step(int steps) {
         throw OpenMMException("TABF step count must be nonnegative");
     for (int i = 0; i < steps; ++i) {
         stepAlpha_ = getGlobalVariable(alphaIndex_);
+#ifdef OPENMM_COLVARS_RESIDENT
         colvars_->validateTabfStart(stepAlpha_, context->getStepCount());
+#endif
         // State updates (e.g. center-of-mass removal) may themselves query
         // forces. Only the later endpoint evaluation may advance Colvars.
         if (context->updateContextState())
