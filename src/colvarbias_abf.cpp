@@ -231,6 +231,10 @@ int colvarbias_abf::init(std::string const &conf)
     get_keyval(conf, "integrateWeighted", integrate_weighted, false, colvarparse::parse_silent);
     // Projected ABF, updating the integrated PMF on the fly
     get_keyval(conf, "pABFintegrateFreq", pabf_freq, 0, colvarparse::parse_silent);
+    if (pabf_freq != 0 && proxy->integrates_colvars_at_step_end()) {
+      return cvmodule->error("Projected ABF is unavailable for endpoint integration: the Colvars restart "
+                             "does not store the projected PMF used to apply forces.\n", COLVARS_INPUT_ERROR);
+    }
     get_keyval(conf, "pABFintegrateMaxIterations", pabf_integrate_iterations, 100, colvarparse::parse_silent);
     get_keyval(conf, "pABFintegrateTol", pabf_integrate_tol, 1e-4, colvarparse::parse_silent);
 
@@ -274,7 +278,7 @@ int colvarbias_abf::init(std::string const &conf)
   if ( input_prefix.size() > 0 ) {
     read_gradients_samples();
     // Update divergence to account for input data
-    pmf->set_div();
+    if (b_integrate) pmf->set_div();
   }
 
   // if extendedLangrangian is on, then call UI estimator
@@ -406,28 +410,6 @@ int colvarbias_abf::update()
   // ******************************************************************
 
 
-  // Reset biasing forces from previous timestep
-  for (i = 0; i < num_variables(); i++) {
-    colvar_forces[i].reset();
-  }
-
-  // Compute and apply the new bias, if applicable
-  if (is_enabled(f_cvb_apply_force) && samples->index_ok(bin)) {
-
-    std::vector<cvm::real>  force(num_variables());
-    calc_biasing_force(force);
-
-    for (size_t i = 0; i < num_variables(); i++) {
-      colvar_forces[i].real_value = force[i];
-    }
-  }
-
-
-  // *********************************
-  // ******  End of ABF proper  ******
-  // *********************************
-
-
   // update the output prefix; TODO: move later to setup_output() function
   if (cvmodule->num_biases_feature(colvardeps::f_cvb_calc_pmf) == 1) {
     // This is the only bias computing PMFs
@@ -451,12 +433,35 @@ int colvarbias_abf::update()
     eabf_UI.update(cvmodule->step_absolute(), x, y);
   }
 
-  /// Compute the bias energy
-  int error_code = calc_energy(NULL);
-
-  return error_code;
+  return evaluate();
 }
 
+bool colvarbias_abf::supports_state_free_evaluation() const
+{
+  // With staggered force sampling, colvar_forces is part of next step's history.
+  return cvmodule->proxy->integrates_colvars_at_step_end() &&
+         cvmodule->proxy->total_forces_same_step();
+}
+
+int colvarbias_abf::evaluate()
+{
+  for (size_t i = 0; i < num_variables(); ++i) {
+    bin[i] = samples->current_bin_scalar(i);
+    colvar_forces[i].reset();
+  }
+  if (!is_enabled(f_cvb_apply_force) && cvmodule->proxy->integrates_colvars_at_step_end()) {
+    // Sampling without applying ABF still updates the free-energy estimate.
+    // This estimate is not an applied potential in the OpenMM force group.
+    bias_energy = 0.0;
+    return COLVARS_OK;
+  }
+  if (is_enabled(f_cvb_apply_force) && samples->index_ok(bin)) {
+    std::vector<cvm::real> force(num_variables());
+    calc_biasing_force(force);
+    for (size_t i = 0; i < num_variables(); ++i) colvar_forces[i].real_value = force[i];
+  }
+  return calc_energy(nullptr);
+}
 
   // ****************************************
   // ******  Helper functions for ABF  ******
@@ -1087,9 +1092,13 @@ int colvarbias_abf::calc_energy(std::vector<colvarvalue> const *values)
       std::vector<int> curr_bin = values ?
         pmf->get_colvars_index(*values) :
         pmf->get_colvars_index();
-      pmf->set_zero_minimum();
       pmf->wrap_to_edge(curr_bin, curr_bin); // Closest edge if outside of grid
-      bias_energy = pmf->value(curr_bin);
+      if (cvmodule->evaluating_current_state()) {
+        bias_energy = pmf->value(curr_bin) - pmf->minimum_value();
+      } else {
+        pmf->set_zero_minimum();
+        bias_energy = pmf->value(curr_bin);
+      }
     }
     return COLVARS_OK;
   }
@@ -1110,7 +1119,9 @@ int colvarbias_abf::calc_energy(std::vector<colvarvalue> const *values)
 
   // Integrate the gradient up to the current position in the home interval, a fractional portion of a bin.
   std::vector<int> ix(1,home);
-  cvm::real frac = gradients->current_bin_scalar_fraction(0);
+  // Above the grid the applied force is zero and the potential retains
+  // the integral over the full last bin.
+  cvm::real frac = home0 >= gradient_len ? 1.0 : gradients->current_bin_scalar_fraction(0);
   sum += gradients->value_output_smoothed(ix, true) * gradients->widths[0] * frac;
 
   // The applied potential is the negative integral of force samples.

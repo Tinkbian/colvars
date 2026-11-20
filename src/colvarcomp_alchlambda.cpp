@@ -52,6 +52,43 @@ int colvar::alch_lambda::init_alchemy(int factor)
 }
 
 
+void colvar::alch_lambda::set_value(colvarvalue const &new_value, bool now)
+{
+  x = new_value;
+  cvmodule->proxy->set_alch_lambda(x.real_value);
+  if (now) cvmodule->proxy->send_alch_lambda();
+}
+
+
+colvar::tabf_alpha::tabf_alpha()
+{
+  set_function_type("tabfAlpha");
+  provide(f_cvc_explicit_gradient, false);
+  provide(f_cvc_gradient, false);
+  provide(f_cvc_collect_atom_ids, false);
+  provide(f_cvc_inv_gradient);
+  provide(f_cvc_Jacobian);
+  x.type(colvarvalue::type_scalar);
+  cvmodule->proxy->get_tabf_alpha(&x.real_value);
+}
+
+
+void colvar::tabf_alpha::calc_value()
+{
+  cvmodule->proxy->get_tabf_alpha(&x.real_value);
+  cvmodule->proxy->get_dE_dtabf_alpha(&ft.real_value);
+  ft.real_value *= -1.0;
+}
+
+
+void colvar::tabf_alpha::set_value(colvarvalue const &new_value, bool now)
+{
+  x = new_value;
+  cvmodule->proxy->set_tabf_alpha(x.real_value);
+  if (now) cvmodule->proxy->send_tabf_alpha();
+}
+
+
 void colvar::alch_lambda::calc_value()
 {
   // By default, follow external parameter

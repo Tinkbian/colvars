@@ -38,6 +38,8 @@ public:
   ~colvarbias_abf() override;
   /// Per-timestep update of ABF bias
   int update() override;
+  bool supports_state_free_evaluation() const override;
+  int evaluate() override;
 
 private:
 

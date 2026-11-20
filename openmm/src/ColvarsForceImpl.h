@@ -12,6 +12,7 @@ public:
     ~ColvarsForceImpl() override;
     const ColvarsForce& getOwner() const override { return owner_; }
     void initialize(OpenMM::ContextImpl&) override;
+    std::map<std::string, double> getDefaultParameters() override;
     double calcForcesAndEnergy(OpenMM::ContextImpl&, bool, bool, int) override;
     double computeForce(OpenMM::ContextImpl&, const std::vector<OpenMM::Vec3>&,
                          std::vector<OpenMM::Vec3>&) override;
@@ -22,6 +23,7 @@ private:
     std::unique_ptr<colvarproxy_openmm> proxy_;
     std::unique_ptr<CudaColvarsKernel> cuda_;
     std::string platform_;
+    bool tabf_ = false;
 };
 }
 #endif

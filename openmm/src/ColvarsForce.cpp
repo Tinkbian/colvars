@@ -17,9 +17,10 @@ ColvarsForce ColvarsForce::fromConfigString(const std::string& config, const std
     force.source_ = ConfigSource::String;
     return force;
 }
-const std::string& ColvarsForce::getUnitSystem() const {
-    static const std::string units("gromacs");
-    return units;
+void ColvarsForce::setUnitSystem(const std::string& units) {
+    if (units != "real" && units != "gromacs")
+        throw OpenMMException("ColvarsForce units must be real or gromacs");
+    unitSystem_ = units;
 }
 void ColvarsForce::setTargetTemperature(double temperature) {
     if (!std::isfinite(temperature) || temperature <= 0)

@@ -78,7 +78,7 @@ endif()
 
 file(GLOB COLVARS_CORE_SOURCES CONFIGURE_DEPENDS "${COLVARS_CORE_DIR}/*.cpp")
 add_library(OpenMMColvars STATIC
-    src/ColvarsForce.cpp src/ColvarsForceImpl.cpp src/colvarproxy_openmm.cpp
+    src/ColvarsForce.cpp src/ColvarsForceImpl.cpp src/ColvarsTABFIntegrator.cpp src/colvarproxy_openmm.cpp
     ${COLVARS_CORE_SOURCES})
 set_target_properties(OpenMMColvars PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(OpenMMColvars PUBLIC
@@ -157,7 +157,7 @@ if(OPENMM_COLVARS_BUILD_PYTHON)
             "-I${CMAKE_CURRENT_SOURCE_DIR}/src" "-I${CMAKE_CURRENT_SOURCE_DIR}/python"
             -outdir "${PYTHON_OUTPUT_DIR}" -o "${PYTHON_OUTPUT_DIR}/openmm_colvars_wrap.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/python/openmm_colvars.i"
-        DEPENDS python/openmm_colvars.i python/openmm_colvars_openmm_import.i src/ColvarsForce.h
+        DEPENDS python/openmm_colvars.i python/openmm_colvars_openmm_import.i src/ColvarsForce.h src/ColvarsTABFIntegrator.h
         VERBATIM)
     Python_add_library(_openmm_colvars MODULE "${PYTHON_OUTPUT_DIR}/openmm_colvars_wrap.cpp")
     target_link_libraries(_openmm_colvars PRIVATE OpenMMColvars Python::Module)

@@ -274,15 +274,7 @@ public:
 
   /// Forcibly set value of CVC - useful for driving an external coordinate,
   /// eg. lambda dynamics
-  inline void set_value(colvarvalue const &new_value, bool now=false) {
-    x = new_value;
-    // Cache value to be communicated to back-end between time steps
-    cvmodule->proxy->set_alch_lambda(x.real_value);
-    if (now) {
-      // If requested (e.g. upon restarting), sync to back-end
-      cvmodule->proxy->send_alch_lambda();
-    }
-  }
+  virtual void set_value(colvarvalue const &new_value, bool /* now */=false) { x = new_value; }
 
 protected:
 
@@ -383,9 +375,19 @@ protected:
   cvm::atom_group  *group2 = nullptr;
   /// Vector distance, cached to be recycled
   cvm::rvector     dist_v;
+#if defined (COLVARS_CUDA) || defined (COLVARS_HIP)
+  cvm::real *gpu_distance_value = nullptr; // Pinned scalar consumed by host biases
+#endif
 public:
   distance();
-  virtual ~distance() {}
+  virtual ~distance();
+#if defined (COLVARS_CUDA) || defined (COLVARS_HIP)
+  /// Select the two-atom device implementation once all bias dependencies are known.
+  int enable_single_pair_gpu();
+  int calc_value_gpu() override;
+  int calc_value_after_gpu() override;
+  int calc_gradients_gpu() override { return COLVARS_OK; } // computed with the distance
+#endif
   virtual int init(std::string const &conf);
   virtual void calc_value();
   virtual void calc_gradients();
@@ -1124,11 +1126,24 @@ protected:
 public:
   alch_lambda();
   int init_alchemy(int time_step_factor);
+  void set_value(colvarvalue const &new_value, bool now) override;
   virtual ~alch_lambda() {}
   virtual void calc_value();
   virtual void calc_force_invgrads();
   virtual void calc_Jacobian_derivative();
   virtual void apply_force(colvarvalue const &force);
+};
+
+
+/// Dimensionless tempering coordinate with Hamiltonian U/alpha.
+class colvar::tabf_alpha : public colvar::cvc {
+public:
+  tabf_alpha();
+  void calc_value() override;
+  void calc_force_invgrads() override {}
+  void calc_Jacobian_derivative() override { jd = 0.0; }
+  void apply_force(colvarvalue const &) override {}
+  void set_value(colvarvalue const &new_value, bool now) override;
 };
 
 

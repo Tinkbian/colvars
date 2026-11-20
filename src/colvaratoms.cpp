@@ -1408,6 +1408,9 @@ int cvm::atom_group::calc_center_of_mass()
     }
   } else if (is_enabled(f_ag_scalable)) {
     com = (cvmodule->proxy)->get_atom_group_com(index);
+  } else if (num_atoms == 1) {
+    // Keep coincident single-atom centers identical for unequal masses.
+    com.set(pos_x(0), pos_y(0), pos_z(0));
   } else {
     com.reset();
     // for (cvmodule->atom_const_iter ai = this->begin(); ai != this->end(); ai++) {

@@ -10,7 +10,7 @@ namespace OpenMM { class Context; }
 namespace ColvarsPlugin {
 
 /** Colvars biases as an ordinary OpenMM Force.
- * Configuration units are gromacs: nm, kJ/mol, and kJ/mol/nm. Atom numbers
+ * Configuration units default to gromacs (nm and kJ/mol). Atom numbers
  * in a Colvars configuration are one based. Configure before creating Context.
  */
 class ColvarsForce : public OpenMM::Force {
@@ -26,7 +26,9 @@ public:
     const std::string& getOutputPrefix() const { return outputPrefix_; }
     const std::string& getRestartInputPrefix() const { return restartInputPrefix_; }
     void setRestartInputPrefix(const std::string& prefix) { restartInputPrefix_ = prefix; }
-    const std::string& getUnitSystem() const;
+    const std::string& getUnitSystem() const { return unitSystem_; }
+    /// Select gromacs (nm, kJ/mol) or real (angstrom, kcal/mol) before Context creation.
+    void setUnitSystem(const std::string& units);
     void setTargetTemperature(double temperature);
     double getTargetTemperature() const { return temperature_; }
     void setRandomSeed(int seed);
@@ -61,6 +63,7 @@ protected:
 private:
     ConfigSource source_ = ConfigSource::File;
     std::string config_, outputPrefix_, restartInputPrefix_;
+    std::string unitSystem_ = "gromacs";
     double temperature_ = 300.0;
     int seed_ = 0;
     bool useGpu_ = true;

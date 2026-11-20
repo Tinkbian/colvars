@@ -182,6 +182,8 @@ protected:
   colvarvalue v_ext;
   /// Previous velocity of the restraint center
   colvarvalue prev_v_ext;
+  /// Geometry of the committed MD endpoint, unaffected by diagnostic queries.
+  colvarvalue endpoint_x{colvarvalue::type_notset};
   /// Mass of the restraint center
   cvm::real ext_mass = 0.0;
   /// Restraint force constant
@@ -190,6 +192,8 @@ protected:
   cvm::real ext_gamma = 0.0;
   /// Amplitude of Gaussian white noise for Langevin extended dynamics
   cvm::real ext_sigma = 0.0;
+  /// Factors used to refresh the Langevin variance if the engine changes dt.
+  cvm::real ext_temperature = 0.0, ext_noise_dt = 0.0;
 
   /// \brief Applied force on extended DOF, for output (unscaled if using MTS)
   colvarvalue fr;
@@ -623,6 +627,7 @@ public:
   class alpha_angles;
   class dihedPC;
   class alch_lambda;
+  class tabf_alpha;
   class alch_Flambda;
   class CartesianBasedPath;
   class aspath;

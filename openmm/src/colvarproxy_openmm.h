@@ -6,12 +6,14 @@
 #include "colvarproxy.h"
 #include "openmm/Vec3.h"
 #include <array>
+#include <limits>
 #include <random>
 #include <mutex>
 #include <string>
 #include <vector>
 
 namespace OpenMM { class ContextImpl; class System; }
+namespace ColvarsPlugin { class ColvarsTABFIntegrator; }
 
 // Colvars currently has shared feature tables and a legacy default proxy.
 // Serialize plugin entry points across OpenMM Contexts and select the active
@@ -36,9 +38,20 @@ public:
     int check_atom_id(int atomNumber) override;
     int set_unit_system(const std::string&, bool checkOnly) override;
     void request_total_force(bool yesno) override;
-    bool total_forces_enabled() const override { return false; }
+    bool total_forces_enabled() const override { return total_force_requested; }
     bool total_forces_same_step() const override { return true; }
     bool can_reuse_atom_pairlists() const override { return false; }
+    bool integrates_colvars_at_step_end() const override { return tabf_ != nullptr; }
+    bool replaying_colvars_endpoint() const override;
+    std::string get_integrator_state() const override;
+    void set_integrator_state(const std::string&) override;
+    int get_tabf_alpha(cvm::real*) override;
+    int get_dE_dtabf_alpha(cvm::real*) override;
+    int set_tabf_alpha(cvm::real) override;
+    int send_tabf_alpha() override;
+    double lengthFromNm() const { return 10.0 * angstrom_value_; }
+    double energyToKJ() const { return 4.184 / kcal_mol_value_; }
+    double forceToOpenMM() const { return lengthFromNm() * energyToKJ(); }
     void add_energy(cvm::real energy) override { biasEnergy_ += energy; }
     void log(const std::string&) override;
     void error(const std::string&) override;
@@ -48,6 +61,7 @@ public:
                         const std::vector<int>&, const std::string&, double) override;
 
     void beginEvaluation(OpenMM::ContextImpl& context);
+    void validateTabfStart(double alpha, long long openmmStep);
     double evaluateColvars();
     double calculate(OpenMM::ContextImpl&, const std::vector<OpenMM::Vec3>&);
     void addForcesToOpenMM(std::vector<OpenMM::Vec3>&) const;
@@ -64,6 +78,12 @@ protected:
     OpenMM::ContextImpl* currentContext_ = nullptr;
     double biasEnergy_ = 0.0;
     bool initialized_ = false;
+    ColvarsPlugin::ColvarsTABFIntegrator* tabf_ = nullptr;
+    double pendingAlpha_ = 0.0;
+    double alphaLowerBound_ = 0.0, alphaUpperBound_ = std::numeric_limits<double>::infinity();
+    bool alphaPending_ = false;
+    bool restartAlphaPending_ = false;
+    bool evaluated_ = false;
     bool usesPbc_ = false;
     std::array<OpenMM::Vec3, 3> lastBox_{};
     bool haveStep_ = false;

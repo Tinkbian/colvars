@@ -179,6 +179,20 @@ int colvarproxy_system::get_dE_dlambda(cvm::real * /* force */)
 }
 
 
+namespace {
+int tabf_not_supported()
+{
+  return cvm::error_static("The MD engine does not implement the tabfAlpha parameter.",
+                           COLVARS_NOT_IMPLEMENTED);
+}
+}
+
+int colvarproxy_system::get_tabf_alpha(cvm::real *) { return tabf_not_supported(); }
+int colvarproxy_system::set_tabf_alpha(cvm::real) { return tabf_not_supported(); }
+int colvarproxy_system::send_tabf_alpha() { return tabf_not_supported(); }
+int colvarproxy_system::get_dE_dtabf_alpha(cvm::real *) { return tabf_not_supported(); }
+
+
 int colvarproxy_system::apply_force_dE_dlambda(cvm::real* /* force */)
 {
   return cvm::error_static("Error in apply_force_dE_dlambda: function is not implemented by this build.",

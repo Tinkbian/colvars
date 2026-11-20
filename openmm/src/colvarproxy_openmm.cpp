@@ -1,5 +1,7 @@
 // Adapted from Colvars PR 979. See ../UPSTREAM.md and ../LICENSE.
 #include "colvarproxy_openmm.h"
+#include "ColvarsTABFIntegrator.h"
+#include "colvarcomp.h"
 #include "colvarfile.h"
 #include "colvaratoms.h"
 #include "colvar.h"
@@ -17,6 +19,7 @@
 #include <cmath>
 #include <cstdint>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <sstream>
@@ -135,6 +138,12 @@ colvarproxy_openmm::~colvarproxy_openmm() {
 void colvarproxy_openmm::initializeColvars(ContextImpl& context) {
     OpenMMColvarsLock lock(this);
     if (initialized_) return;
+    currentContext_ = &context;
+    tabf_ = dynamic_cast<ColvarsTABFIntegrator*>(&context.getIntegrator());
+    const double timestep = 1000.0 * context.getIntegrator().getStepSize();
+    if (!std::isfinite(timestep) || (tabf_ && timestep <= 0))
+        throw OpenMMException("Colvars requires a finite timestep and positive dt for TABF");
+    set_integration_timestep(timestep);
     if (owner_.getNumParticleCharges() != 0 && owner_.getNumParticleCharges() != system_.getNumParticles())
         throw OpenMMException("Colvars particle charges must contain exactly one entry per System particle");
     int result = set_unit_system(owner_.getUnitSystem(), false);
@@ -143,15 +152,38 @@ void colvarproxy_openmm::initializeColvars(ContextImpl& context) {
     result |= setup();
     if (result || cvmodule->get_error()) throw OpenMMException("Colvars initialization: " + get_error_msgs());
     // State mutation and fresh force evaluation must be separable for OpenMM.
+    int alphaDrivers = 0;
     for (auto* cv : *cvmodule->variables()) {
         if (cv->get_time_step_factor() != 1)
             throw OpenMMException("OpenMM Colvars requires timeStepFactor 1 on every colvar");
-        if (cv->is_enabled(colvardeps::f_cv_extended_Lagrangian))
-            throw OpenMMException("OpenMM Colvars: extendedLagrangian is not supported by repeat-safe evaluation");
+        if (cv->is_enabled(colvardeps::f_cv_extended_Lagrangian) && !tabf_)
+            throw OpenMMException("OpenMM extendedLagrangian requires ColvarsTABFIntegrator");
+        const bool alpha = cv->num_cvcs() == 1 && cv->get_cvcs()[0]->function_type() == "tabfAlpha";
+        if (alpha) {
+            if (!cv->is_enabled(colvardeps::f_cv_extended_Lagrangian) || ++alphaDrivers > 1)
+                throw OpenMMException("TABF requires exactly one extendedLagrangian tabfAlpha driver");
+            if (cv->is_enabled(colvardeps::f_cv_lower_boundary)) {
+                alphaLowerBound_ = cv->lower_boundary.real_value;
+                if (!std::isfinite(alphaLowerBound_) || alphaLowerBound_ <= 0)
+                    throw OpenMMException("TABF lowerBoundary must be finite and positive");
+            }
+            if (cv->is_enabled(colvardeps::f_cv_upper_boundary)) {
+                alphaUpperBound_ = cv->upper_boundary.real_value;
+                if (!std::isfinite(alphaUpperBound_) || alphaUpperBound_ <= alphaLowerBound_)
+                    throw OpenMMException("Invalid TABF upperBoundary");
+            }
+        }
+        if (cv->is_enabled(colvardeps::f_cv_total_force_calc) &&
+            !(tabf_ && alpha))
+            throw OpenMMException("OpenMM Colvars does not supply total atomic forces for conventional ABF");
     }
+    if (tabf_ && alphaDrivers != 1)
+        throw OpenMMException("ColvarsTABFIntegrator requires exactly one extendedLagrangian tabfAlpha driver");
     if (cvmodule->scripted_forces())
         throw OpenMMException("OpenMM Colvars does not support scripted forces");
     const bool barostat = hasMonteCarloBarostat(context);
+    if (tabf_ && barostat)
+        throw OpenMMException("OpenMM TABF does not support Monte Carlo barostats");
     std::vector<colvarbias*> adaptiveBiases;
     for (auto* bias : cvmodule->biases) {
         if (bias->get_time_step_factor() != 1)
@@ -166,7 +198,7 @@ void colvarproxy_openmm::initializeColvars(ContextImpl& context) {
                                       "trial evaluations cannot commit adaptive history for bias " + bias->name);
         }
     }
-    requiresConsecutiveSteps_ = !adaptiveBiases.empty();
+    requiresConsecutiveSteps_ = tabf_ || !adaptiveBiases.empty();
     cvm::restart_info restart;
     result = cvmodule->setup_input(&restart);
     if (result || cvmodule->get_error()) throw OpenMMException("Colvars initialization: " + get_error_msgs());
@@ -185,6 +217,9 @@ void colvarproxy_openmm::initializeColvars(ContextImpl& context) {
                                           " for adaptive bias " + bias->name);
         }
         if (restart.has_timestep) set_integration_timestep(restart.timestep);
+        if (tabf_ && (!restart.has_timestep || std::abs(restart.timestep-timestep) > 1e-6*timestep ||
+                     restart.variables.size() != cvmodule->variables()->size()))
+            throw OpenMMException("TABF restart requires matching timestep and all collective variables");
     }
     result = cvmodule->setup_output();
     if (result || cvmodule->get_error()) throw OpenMMException("Colvars initialization: " + get_error_msgs());
@@ -225,21 +260,67 @@ int colvarproxy_openmm::request_atom_charges() {
 }
 
 int colvarproxy_openmm::set_unit_system(const std::string& name, bool checkOnly) {
-    if (name != "gromacs") {
+    if (name != owner_.getUnitSystem()) {
         if (checkOnly) return COLVARS_ERROR;
-        throw OpenMMException("OpenMM Colvars requires units gromacs (nm, kJ/mol); convert real-unit configurations explicitly");
+        throw OpenMMException("Colvars configuration units must match ColvarsForce.setUnitSystem()");
     }
     if (!checkOnly) {
-        units = "gromacs";
-        angstrom_value_ = 0.1;
-        kcal_mol_value_ = 4.184;
-        boltzmann_ = 0.00831446261815324;
+        units = name;
+        angstrom_value_ = name == "real" ? 1.0 : 0.1;
+        kcal_mol_value_ = name == "real" ? 1.0 : 4.184;
+        boltzmann_ = 0.00831446261815324 / energyToKJ();
     }
     return COLVARS_OK;
 }
 
 void colvarproxy_openmm::request_total_force(bool yesno) {
-    if (yesno) throw OpenMMException("OpenMM Colvars: total-force sampling (including ABF/eABF) is not supported; completed physical forces are not available in this evaluation path");
+    if (yesno && !tabf_)
+        throw OpenMMException("OpenMM Colvars cannot supply total atomic forces for ABF");
+    // The required projected force is available only for the external alpha.
+    // Validate the individual requesting CVs once parsing has finished.
+    total_force_requested = yesno;
+}
+
+int colvarproxy_openmm::get_tabf_alpha(cvm::real* alpha) {
+    if (!tabf_) throw OpenMMException("tabfAlpha requires ColvarsTABFIntegrator");
+    *alpha = tabf_->getAlpha();
+    return COLVARS_OK;
+}
+bool colvarproxy_openmm::replaying_colvars_endpoint() const {
+    return tabf_ && tabf_->isCollectingBias() && haveStep_ && currentStep_ == lastUpdatedStep_;
+}
+int colvarproxy_openmm::get_dE_dtabf_alpha(cvm::real* derivative) {
+    if (!tabf_) throw OpenMMException("tabfAlpha requires ColvarsTABFIntegrator");
+    *derivative = tabf_->getAlphaDerivative() / energyToKJ();
+    return COLVARS_OK;
+}
+int colvarproxy_openmm::set_tabf_alpha(cvm::real alpha) {
+    if (!std::isfinite(alpha) || alpha <= 0) throw OpenMMException("Invalid TABF alpha");
+    pendingAlpha_ = alpha;
+    alphaPending_ = true;
+    return COLVARS_OK;
+}
+int colvarproxy_openmm::send_tabf_alpha() {
+    if (alphaPending_) {
+        if (!initialized_) restartAlphaPending_ = true;
+        else tabf_->setNextAlpha(pendingAlpha_);
+        alphaPending_ = false;
+    }
+    return COLVARS_OK;
+}
+
+std::string colvarproxy_openmm::get_integrator_state() const {
+    std::ostringstream out;
+    out << rng_ << ' ' << gaussian_;
+    std::string result = out.str();
+    std::replace(result.begin(), result.end(), ' ', ',');
+    return result;
+}
+void colvarproxy_openmm::set_integrator_state(const std::string& state) {
+    std::string decoded = state;
+    std::replace(decoded.begin(), decoded.end(), ',', ' ');
+    std::istringstream in(decoded);
+    if (!(in >> rng_ >> gaussian_)) throw OpenMMException("Invalid or missing Colvars endpoint RNG state");
 }
 
 void colvarproxy_openmm::log(const std::string& message) {
@@ -253,19 +334,47 @@ void colvarproxy_openmm::error(const std::string& message) {
 }
 cvm::real colvarproxy_openmm::rand_gaussian() { return gaussian_(rng_); }
 
+void colvarproxy_openmm::validateTabfStart(double alpha, long long openmmStep) {
+    OpenMMColvarsLock lock(this);
+    if (restartPending_ && openmmStep != cvmodule->it_restart)
+        throw OpenMMException("TABF requires a matching OpenMM checkpoint and Colvars endpoint step");
+    if (haveStep_ && openmmStep != lastUpdatedStep_)
+        throw OpenMMException("The OpenMM step count and the committed Colvars TABF endpoint differ");
+    if (!std::isfinite(alpha) || alpha <= 0)
+        throw OpenMMException("TABF alpha must be finite and positive");
+    if ((restartAlphaPending_ || haveStep_) && std::abs(alpha - pendingAlpha_) >
+            1e-12 * std::max(1.0, std::abs(pendingAlpha_)))
+        throw OpenMMException("TABF alpha differs between the Colvars state and OpenMM checkpoint or integrator");
+    if (!haveStep_ && !restartPending_ && (alpha < alphaLowerBound_ || alpha > alphaUpperBound_))
+        throw OpenMMException("Initial TABF alpha is outside the configured boundaries");
+}
+
 void colvarproxy_openmm::beginEvaluation(ContextImpl& context) {
     OpenMMColvarsLock lock(this);
     if (!initialized_) throw OpenMMException("Colvars proxy was not initialized");
     currentContext_ = &context;
     currentStep_ = context.getOwner().getStepCount();
+    if (tabf_) {
+        // OpenMM increments its step counter after the endpoint force call.
+        // Label the accepted state with the step in the resulting checkpoint.
+        if (tabf_->isCollectingBias()) {
+            if (currentStep_ == std::numeric_limits<long long>::max())
+                throw OpenMMException("TABF endpoint step counter overflow");
+            ++currentStep_;
+        } else {
+            validateTabfStart(tabf_->getAlpha(), currentStep_);
+        }
+        if (total_force_requested) set_total_forces_valid();
+    }
     if (haveStep_ && currentStep_ < lastUpdatedStep_)
         throw OpenMMException("OpenMM Colvars cannot move backwards in step count; recreate Context and load a Colvars restart");
     if (usesPbc_) {
         std::array<Vec3, 3> box;
         context.getPeriodicBoxVectors(box[0], box[1], box[2]);
         if (box != lastBox_) {
-            const cvm::rvector a(box[0][0], 0.0, 0.0), b(box[1][0], box[1][1], 0.0);
-            const cvm::rvector c(box[2][0], box[2][1], box[2][2]);
+            const double length = lengthFromNm();
+            const cvm::rvector a(length * box[0][0], 0.0, 0.0), b(length * box[1][0], length * box[1][1], 0.0);
+            const cvm::rvector c(length * box[2][0], length * box[2][1], length * box[2][2]);
             // The reciprocal-cell calculation uses squared lengths. Reject
             // unrepresentable box heights before changing the saved bias.
             for (double height : {a.x, b.y, c.z}) {
@@ -282,8 +391,8 @@ void colvarproxy_openmm::beginEvaluation(ContextImpl& context) {
         }
     }
     if (!haveStep_) {
-        initialOpenmmStep_ = currentStep_;
-        initialColvarsStep_ = restartPending_ ? cvmodule->it_restart : currentStep_;
+        initialOpenmmStep_ = tabf_ ? 0 : currentStep_;
+        initialColvarsStep_ = tabf_ ? 0 : (restartPending_ ? cvmodule->it_restart : currentStep_);
     }
     const double timestepFs = 1000.0 * context.getIntegrator().getStepSize();
     if (!std::isfinite(timestepFs))
@@ -315,8 +424,10 @@ double colvarproxy_openmm::evaluateColvars() {
     OpenMMColvarsLock lock(this);
     // The step saved in a restart has already updated its adaptive history.
     // Its first evaluation restores current forces without depositing again.
-    const bool advance = haveStep_ ? currentStep_ != lastUpdatedStep_ : !restartPending_;
-    if (!haveStep_ && advance && currentStep_ != 0) {
+    const bool freshStep = !haveStep_ || currentStep_ != lastUpdatedStep_;
+    const bool advance = tabf_ ? (tabf_->isCollectingBias() && freshStep) :
+                         (freshStep && !restartPending_);
+    if (!haveStep_ && advance && currentStep_ != 0 && !restartPending_) {
         // A caller can set the starting OpenMM step after creating the Context.
         cvmodule->set_initial_step(currentStep_);
         for (auto* bias : cvmodule->biases) {
@@ -327,11 +438,16 @@ double colvarproxy_openmm::evaluateColvars() {
     }
     const int result = cvmodule->calc(advance);
     if (result || cvmodule->get_error()) throw OpenMMException("Colvars evaluation: " + get_error_msgs());
-    haveStep_ = true;
-    restartPending_ = false;
-    lastUpdatedStep_ = currentStep_;
+    evaluated_ = true;
+    if (advance || !tabf_) {
+        if (tabf_) send_tabf_alpha();
+        haveStep_ = true;
+        restartPending_ = false;
+        restartAlphaPending_ = false;
+        lastUpdatedStep_ = currentStep_;
+    }
     if (advance) ++biasUpdateCount_;
-    return biasEnergy_;
+    return biasEnergy_ * energyToKJ();
 }
 
 double colvarproxy_openmm::calculate(ContextImpl& context, const std::vector<Vec3>& positions) {
@@ -340,7 +456,7 @@ double colvarproxy_openmm::calculate(ContextImpl& context, const std::vector<Vec
     auto& selected = *modify_atom_positions();
     for (size_t i = 0; i < atoms_ids.size(); ++i) {
         const Vec3& p = positions.at(atoms_ids[i]);
-        selected[i] = cvm::rvector(p[0],p[1],p[2]);
+        selected[i] = lengthFromNm() * cvm::rvector(p[0],p[1],p[2]);
     }
     return evaluateColvars();
 }
@@ -348,12 +464,12 @@ double colvarproxy_openmm::calculate(ContextImpl& context, const std::vector<Vec
 void colvarproxy_openmm::addForcesToOpenMM(std::vector<Vec3>& forces) const {
     const auto& applied = *get_atom_applied_forces();
     for (size_t i = 0; i < atoms_ids.size(); ++i)
-        forces.at(atoms_ids[i]) += Vec3(applied[i].x,applied[i].y,applied[i].z);
+        forces.at(atoms_ids[i]) += forceToOpenMM() * Vec3(applied[i].x,applied[i].y,applied[i].z);
 }
 
 double colvarproxy_openmm::getColvarValue(const std::string& name) const {
     OpenMMColvarsLock lock(const_cast<colvarproxy_openmm*>(this));
-    if (!haveStep_) throw OpenMMException("Evaluate energy or forces before reading a Colvars value");
+    if (!evaluated_) throw OpenMMException("Evaluate energy or forces before reading a Colvars value");
     auto* cv = cvmodule->colvar_by_name(name);
     if (!cv) throw OpenMMException("Unknown Colvars variable: " + name);
     if (cv->value().type() != colvarvalue::type_scalar)

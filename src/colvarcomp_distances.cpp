@@ -34,6 +34,67 @@ colvar::distance::distance()
   enable(f_cvc_com_based);
 }
 
+colvar::distance::~distance()
+{
+#if defined (COLVARS_CUDA) || defined (COLVARS_HIP)
+  if (gpu_distance_value) {
+    checkGPUError(cudaStreamSynchronize(get_stream()));
+    cvmodule->proxy->deallocate_host(&gpu_distance_value);
+  }
+#endif
+}
+
+#if defined (COLVARS_CUDA) || defined (COLVARS_HIP)
+int colvar::distance::enable_single_pair_gpu()
+{
+  if (!cvmodule->proxy->has_gpu_support() || gpu_distance_value || function_type() != "distance" ||
+      atom_groups.size() != 2 || is_enabled(f_cvc_inv_gradient) ||
+      is_enabled(f_cvc_debug_gradient) || is_enabled(f_cvc_collect_atom_ids)) return COLVARS_OK;
+  for (auto *group : atom_groups) {
+    if (group->size() != 1 || group->get_parents().size() != 1 ||
+        group->b_dummy || group->total_mass <= 0.0 ||
+        group->is_enabled(f_ag_scalable) || group->is_enabled(f_ag_center) ||
+        group->is_enabled(f_ag_rotate) || group->fitting_group) return COLVARS_OK;
+  }
+  provide(f_cvc_support_gpu);
+  int error_code = cvc::init_gpu();
+  error_code |= cvmodule->proxy->allocate_host(&gpu_distance_value, 1);
+  if (error_code != COLVARS_OK) return error_code;
+  error_code |= enable(f_cvc_support_gpu);
+  error_code |= disable(f_cvc_require_cpu_buffers);
+  return error_code;
+}
+
+int colvar::distance::calc_value_gpu()
+{
+  using gpu_group = colvars_gpu::colvaratoms_gpu;
+  int error_code = COLVARS_OK;
+  for (auto *group : atom_groups) {
+    error_code |= checkGPUError(cudaStreamWaitEvent(get_stream(), group->get_gpu_atom_group()->get_event(
+      gpu_group::event_type::read_and_calculate)));
+  }
+  if (error_code != COLVARS_OK) return error_code;
+  auto &first = group1->get_gpu_atom_group()->get_gpu_buffers();
+  auto &second = group2->get_gpu_atom_group()->get_gpu_buffers();
+  error_code = colvars_gpu::calc_single_pair_distance(first.d_com, second.d_com,
+    first.d_atoms_grad, second.d_atoms_grad, gpu_distance_value, boundary_conditions, get_stream());
+  if (error_code != COLVARS_OK) return error_code;
+  error_code |= checkGPUError(cudaEventRecord(get_event(event_type::calc_value), get_stream()));
+  error_code |= checkGPUError(cudaEventRecord(get_event(event_type::calc_gradients), get_stream()));
+  for (auto *group : atom_groups) {
+    error_code |= checkGPUError(cudaStreamWaitEvent(group->get_stream(), get_event(event_type::calc_gradients)));
+  }
+  return error_code;
+}
+
+int colvar::distance::calc_value_after_gpu()
+{
+  int error_code = checkGPUError(cudaEventSynchronize(get_event(event_type::calc_value)));
+  if (error_code == COLVARS_OK) x.real_value = *gpu_distance_value;
+  return error_code;
+}
+#endif
+
 
 int colvar::distance::init(std::string const &conf)
 {

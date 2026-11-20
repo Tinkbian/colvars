@@ -8,6 +8,10 @@
 
 namespace colvars_gpu {
 
+int calc_single_pair_distance(const cvm::rvector *center1, const cvm::rvector *center2,
+                              cvm::real *grad1, cvm::real *grad2, cvm::real *value,
+                              cvm::system_boundary_conditions bc, cudaStream_t stream);
+
 int calc_value_rmsd(
   const cvm::real* ref_pos,
   const cvm::real* ag_pos,

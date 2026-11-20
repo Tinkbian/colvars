@@ -2,6 +2,7 @@
 #include "colvarcomp_distance_kernel.h"
 #include "colvar_rotation_derivative.h"
 #include "colvartypes.h"
+#include "colvars_system.h"
 
 #if defined(COLVARS_CUDA)
 #include <cub/block/block_reduce.cuh>
@@ -14,6 +15,27 @@
 
 namespace colvars_gpu {
 #if defined(COLVARS_CUDA) || defined(COLVARS_HIP)
+
+__global__ void single_pair_distance_kernel(const cvm::rvector *center1, const cvm::rvector *center2,
+                                            cvm::real *grad1, cvm::real *grad2, cvm::real *value,
+                                            cvm::system_boundary_conditions bc) {
+  const cvm::rvector delta = bc.position_distance(*center1, *center2);
+  const cvm::real length = delta.norm();
+  *value = length;
+  const cvm::rvector direction = length > 0.0 ? delta / length : cvm::rvector(0.0, 0.0, 0.0);
+  for (int axis = 0; axis < 3; ++axis) {
+    grad1[axis] = -direction[axis];
+    grad2[axis] = direction[axis];
+  }
+}
+
+int calc_single_pair_distance(const cvm::rvector *center1, const cvm::rvector *center2,
+                              cvm::real *grad1, cvm::real *grad2, cvm::real *value,
+                              cvm::system_boundary_conditions bc, cudaStream_t stream) {
+  void *args[] = {&center1, &center2, &grad1, &grad2, &value, &bc};
+  return checkGPUError(cudaLaunchKernel(reinterpret_cast<const void *>(single_pair_distance_kernel),
+                                        dim3(1), dim3(1), args, 0, stream));
+}
 
 template <int BLOCK_SIZE>
 __global__ void calc_value_rmsd_kernel(

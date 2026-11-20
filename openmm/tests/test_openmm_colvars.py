@@ -99,9 +99,9 @@ def harmonic_oracle(positions, box=None):
 
 
 def make_context(engine, tmp_path, config=None, box=None, group=1, from_file=False, extra_forces=(),
-                 integrator=None):
+                 integrator=None, masses=MASSES):
     system = mm.System()
-    for mass in MASSES:
+    for mass in masses:
         system.addParticle(float(mass))
     for other in extra_forces:
         system.addForce(other)
@@ -123,7 +123,7 @@ def make_context(engine, tmp_path, config=None, box=None, group=1, from_file=Fal
         integrator = mm.VerletIntegrator(DT)
     context = mm.Context(system, integrator,
                          mm.Platform.getPlatformByName(engine.platform), engine.properties)
-    context.setVelocities(np.zeros((len(MASSES), 3)))
+    context.setVelocities(np.zeros((len(masses), 3)))
     return context, integrator, force
 
 
@@ -131,6 +131,42 @@ def state_values(context, groups=-1):
     state = context.getState(getEnergy=True, getForces=True, groups=groups)
     return (state.getPotentialEnergy().value_in_unit(unit.kilojoule_per_mole),
             np.asarray(state.getForces(asNumpy=True).value_in_unit(unit.kilojoule_per_mole / unit.nanometer)))
+
+
+@pytest.mark.parametrize("no_pbc", [False, True])
+def test_single_pair_distance_and_gradient(engine, tmp_path, no_pbc):
+    config = distance_config().replace("atomNumbers 1 4", "atomNumbers 1").replace("atomNumbers 3 6", "atomNumbers 3")
+    if no_pbc:
+        config = config.replace("distance {", "distance {\n    forceNoPBC yes")
+    box = np.array([[2., 0., 0.], [0.3, 1.6, 0.], [0.4, 0.3, 1.9]])
+    masses = MASSES.copy()
+    masses[0], masses[2] = 12.011, 1.008
+    context, integrator, force = make_context(engine, tmp_path, config=config, box=box, masses=masses)
+    if engine.use_gpu:
+        assert "GPU CVCs=d/distance" in force.getBackend(context)
+        assert "CPU CVCs=none" in force.getBackend(context)
+
+    positions = geometry([0.1, 0.2, 0.1])
+    positions[0] = [0.125, 0.25, 0.375]
+    short = np.array([0.3, 0.15, -0.2])
+    elongated = np.array([[100., 0., 0.], [20., 1., 0.], [0., 0., 2.]])
+    for cell, unwrapped, nearest in [(box, short+box[1], short), (box, np.zeros(3), np.zeros(3)),
+                                      (elongated, [40., 0., 0.], [0., -2., 0.])]:
+        context.setPeriodicBoxVectors(*(mm.Vec3(*row) for row in cell))
+        delta = np.asarray(unwrapped if no_pbc else nearest)
+        distance = np.linalg.norm(delta)
+        positions[2] = positions[0]+unwrapped
+        context.setPositions(positions)
+        energy, forces = state_values(context)
+        spring = FORCE_CONSTANT/WIDTH**2
+        expected = np.zeros_like(positions)
+        if distance:
+            expected[0] = spring*(distance-CENTER)*delta/distance
+            expected[2] = -expected[0]
+        assert force.getColvarValue(context, "d") == pytest.approx(distance, abs=engine.tolerances[0], rel=0)
+        assert energy == pytest.approx(0.5*spring*(distance-CENTER)**2, abs=engine.tolerances[1], rel=0)
+        np.testing.assert_allclose(forces, expected, atol=engine.tolerances[2], rtol=0)
+        np.testing.assert_allclose(forces.sum(axis=0), 0.0, atol=engine.tolerances[2], rtol=0)
 
 
 def assert_analytical(context, force, engine, positions, box=None):
@@ -175,6 +211,7 @@ def test_distance_harmonic_analytical(engine, tmp_path, displacement, box):
     backend = force.getBackend(context).lower()
     if engine.platform == "CUDA" and engine.use_gpu:
         assert "colvarsgpu" in backend.replace(" ", "")
+        assert "cpu cvcs=d/distance" in backend
     if engine.platform == "CUDA" and not engine.use_gpu:
         assert "colvarscpu" in backend.replace(" ", "")
     del context, integrator

@@ -1,5 +1,6 @@
 // Adapted from Colvars PR 979. See ../UPSTREAM.md and ../LICENSE.
 #include "ColvarsForceImpl.h"
+#include "ColvarsTABFIntegrator.h"
 #include "colvarproxy_openmm.h"
 #include "openmm/internal/ContextImpl.h"
 #include "openmm/OpenMMException.h"
@@ -10,6 +11,10 @@ using namespace ColvarsPlugin;
 
 ColvarsForceImpl::ColvarsForceImpl(const ColvarsForce& owner)
     : CustomCPPForceImpl(owner), owner_(owner) {}
+std::map<std::string, double> ColvarsForceImpl::getDefaultParameters() {
+    if (!tabf_) return {};
+    return {{ColvarsTABFIntegrator::derivativeParameterName(), 0.0}};
+}
 ColvarsForceImpl::~ColvarsForceImpl() {
     OpenMMColvarsLock lock;
     cuda_.reset();
@@ -17,6 +22,7 @@ ColvarsForceImpl::~ColvarsForceImpl() {
 }
 void ColvarsForceImpl::initialize(ContextImpl& context) {
     OpenMMColvarsLock lock;
+    tabf_ = dynamic_cast<ColvarsTABFIntegrator*>(&context.getIntegrator()) != nullptr;
     platform_ = context.getPlatform().getName();
     if (platform_ == "CUDA") {
 #ifdef OPENMM_COLVARS_ENABLE_CUDA

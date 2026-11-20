@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <iostream>
 #include <iomanip>
+#include <limits>
 
 #include "colvarmodule.h"
 #include "colvarvalue.h"
@@ -326,6 +327,16 @@ int colvar::init(std::string const &conf)
   }
 
   error_code |= init_grid_parameters(conf);
+
+  for (auto const &component : cvcs) {
+    if (component->function_type() == "tabfAlpha") {
+      if (!is_enabled(f_cv_single_cvc) || time_step_factor != 1) {
+        return cvmodule->error("tabfAlpha requires a single unmodified component evaluated every step.",
+                               COLVARS_INPUT_ERROR);
+      }
+      error_code |= enable(f_cv_external);
+    }
+  }
 
   // Detect if we have a single component that is an alchemical lambda
   if (is_enabled(f_cv_single_cvc) && cvcs[0]->function_type() == "alchLambda") {
@@ -758,6 +769,10 @@ int colvar::init_extended_Lagrangian(std::string const &conf)
         / (4.0 * PI * PI * tolerance * tolerance);
       cvmodule->log("Computed fictitious mass: " + cvm::to_str(ext_mass) + " [E]/(U/fs)^2   (U: colvar unit)\n");
     }
+    if (proxy->integrates_colvars_at_step_end() &&
+        (!std::isfinite(ext_mass) || ext_mass <= 0 || !std::isfinite(temp) || temp <= 0))
+      return cvmodule->error("Extended dynamics requires a positive finite mass and temperature for " + name,
+                             COLVARS_INPUT_ERROR);
     {
       bool b_output_energy;
       get_keyval(conf, "outputEnergy", b_output_energy, false);
@@ -767,14 +782,15 @@ int colvar::init_extended_Lagrangian(std::string const &conf)
     }
 
     get_keyval(conf, "extendedLangevinDamping", ext_gamma, 1.0);
-    if (ext_gamma < 0.0) {
-      cvmodule->error("Error: \"extendedLangevinDamping\" may not be negative.\n", COLVARS_INPUT_ERROR);
-      return COLVARS_INPUT_ERROR;
+    if (ext_gamma < 0.0 || !std::isfinite(ext_gamma)) {
+      return cvmodule->error("Error: \"extendedLangevinDamping\" must be finite and nonnegative.\n", COLVARS_INPUT_ERROR);
     }
     if (ext_gamma != 0.0) {
       enable(f_cv_Langevin);
       cvmodule->cite_feature("BAOA integrator");
       ext_gamma *= 1.0e-3; // correct as long as input is required in ps-1 and cvmodule->dt() is in fs
+      ext_temperature = temp;
+      ext_noise_dt = cvmodule->dt() * cvm::real(time_step_factor);
       // Adjust Langevin sigma for slow time step if time_step_factor != 1
       // Eq. (6a) in https://doi.org/10.1021/acs.jctc.2c00585
       ext_sigma = cvm::sqrt((1.0 - cvm::exp(-2.0 * ext_gamma * cvmodule->dt() * cvm::real(time_step_factor)))
@@ -933,6 +949,7 @@ void colvar::define_component_types()
   add_component_type<inertia_z>("moment of inertia around an axis", "inertiaZ");
   add_component_type<eigenvector>("eigenvector", "eigenvector");
   add_component_type<alch_lambda>("alchemical coupling parameter", "alchLambda");
+  add_component_type<tabf_alpha>("potential tempering parameter", "tabfAlpha");
   add_component_type<alch_Flambda>("force on alchemical coupling parameter", "alchFLambda");
   add_component_type<aspath>("arithmetic path collective variables (s)", "aspath");
   add_component_type<azpath>("arithmetic path collective variables (z)", "azpath");
@@ -1603,7 +1620,8 @@ int colvar::collect_cvc_values()
 
   if (after_restart) {
     x_old = x_restart;
-    if (cvmodule->proxy->simulation_running()) {
+    if (cvmodule->proxy->simulation_running() &&
+        !(cvmodule->proxy->integrates_colvars_at_step_end() && cvmodule->step_relative() > 0)) {
       cvm::real const jump2 = dist2(x, x_restart) / (width*width);
       if (jump2 > 0.25) {
         cvmodule->error("Error: the calculated value of colvar \""+name+
@@ -1886,8 +1904,17 @@ int colvar::calc_colvar_properties()
   if (cvmodule->evaluating_current_state()) {
     // The geometry and gradients are fresh, but velocity/history bookkeeping
     // still refers to the one accepted evaluation of this MD step.
-    // calc(false) rejects extended-Lagrangian CVs before reaching this point.
-    x_reported = x;
+    if (is_enabled(f_cv_extended_Lagrangian)) {
+      bool const replay = cvmodule->proxy->replaying_colvars_endpoint();
+      x_reported = replay ? prev_x_ext : (x_ext.type() == colvarvalue::type_notset ? x : x_ext);
+      if (is_enabled(f_cv_reflecting_lower_boundary) && x_reported < lower_boundary)
+        x_reported = lower_boundary;
+      if (is_enabled(f_cv_reflecting_upper_boundary) && x_reported > upper_boundary)
+        x_reported = upper_boundary;
+      v_reported = replay ? prev_v_ext : v_ext;
+    } else {
+      x_reported = x;
+    }
     ft_reported = ft;
     // A loaded step is first evaluated without advancing its bias history.
     // collect_cvc_values() has already validated the restored geometry, so
@@ -1949,6 +1976,11 @@ int colvar::calc_colvar_properties()
     x_reported = x_ext;
     v_reported = v_ext;
 
+    // At a constrained endpoint the geometry and the held auxiliary position
+    // are both known. ABF can sample their current spring force directly.
+    if (cvmodule->proxy->integrates_colvars_at_step_end() && !is_enabled(f_cv_external))
+      ft_reported = (-0.5 * ext_force_k) * dist2_lgrad(x_ext, x);
+
     // the "total force" for the extended Lagrangian is calculated in update_forces_energy() below
     // A future improvement could compute a "system force" here, borrowing a part of update_extended_Lagrangian()
     // this would change the behavior of eABF with respect to other biases
@@ -1968,6 +2000,7 @@ int colvar::calc_colvar_properties()
     ft_reported = ft;
   }
 
+  if (cvmodule->proxy->integrates_colvars_at_step_end()) endpoint_x = x;
   // At the end of the first update after a restart, we can reset the flag
   after_restart = false;
   return COLVARS_OK;
@@ -2005,6 +2038,14 @@ cvm::real colvar::update_forces_energy()
   // At this point f is the force f from external biases that will be applied to the
   // extended variable if there is one
   if (is_enabled(f_cv_extended_Lagrangian) && cvmodule->proxy->simulation_running()) {
+    if (cvmodule->evaluating_current_state()) {
+      // Diagnostic forces use the held auxiliary coordinate and momentum.
+      // No thermostat draw or integration is performed for an OpenMM query.
+      if (!is_enabled(f_cv_external)) {
+        f = (0.5 * ext_force_k) * dist2_lgrad(x_reported, x) + fb_actual;
+      }
+      return 0.5 * ext_force_k * dist2(x_reported, x);
+    }
     update_extended_Lagrangian();
   }
 
@@ -2016,7 +2057,10 @@ cvm::real colvar::update_forces_energy()
 
   if (cvm::debug())
     cvmodule->log("Done updating colvar \""+this->name+"\".\n");
-  return (potential_energy + kinetic_energy);
+  // OpenMM Force reports a potential. The auxiliary kinetic energy belongs
+  // in the Colvars trajectory and has no atomic coordinate gradient.
+  return cvmodule->proxy->integrates_colvars_at_step_end() ? potential_energy :
+                                                            potential_energy + kinetic_energy;
 }
 
 
@@ -2128,6 +2172,11 @@ void colvar::update_extended_Lagrangian()
 
   // [O] leap to v_(i+1/2) (10c)
   if (is_enabled(f_cv_Langevin)) {
+    if (dt != ext_noise_dt) {
+      ext_sigma = cvm::sqrt(-std::expm1(-2.0 * ext_gamma * dt) * ext_mass *
+                            cvmodule->proxy->boltzmann() * ext_temperature);
+      ext_noise_dt = dt;
+    }
     colvarvalue rnd(x);
     rnd.set_random();
     // ext_sigma has been computed at init time according to (10c)
@@ -2565,9 +2614,11 @@ int colvar::set_state_params(std::string const &conf)
     cvmodule->log("Restarting collective variable \""+name+"\" from value: "+
              cvm::to_str(x)+"\n");
     x_restart = x;
+    if (cvmodule->proxy->integrates_colvars_at_step_end()) endpoint_x = x;
     after_restart = true;
     // Externally driven cv (e.g. alchemical lambda) is imposed by restart value
-    if (is_enabled(f_cv_external) && is_enabled(f_cv_extended_Lagrangian)) {
+    if (is_enabled(f_cv_external) && is_enabled(f_cv_extended_Lagrangian) &&
+        !cvmodule->proxy->integrates_colvars_at_step_end()) {
       // Request immediate sync of driven parameter to back-end code
       cvcs[0]->set_value(x, true);
     }
@@ -2584,6 +2635,21 @@ int colvar::set_state_params(std::string const &conf)
                                COLVARS_INPUT_ERROR);
     }
     x_reported = x_ext;
+    if (cvmodule->proxy->integrates_colvars_at_step_end()) {
+      // Ordinary Colvars restart fields contain the auxiliary position and
+      // velocity before the saved step. The paired OpenMM checkpoint starts
+      // after that step and must use the integrated values instead.
+      prev_x_ext = x_ext;
+      prev_v_ext = v_ext;
+      endpoint_x = x;
+      if (!get_keyval(conf, "endpointNextX", x_ext, x_ext, colvarparse::parse_silent) ||
+          !get_keyval(conf, "endpointNextV", v_ext, v_ext, colvarparse::parse_silent))
+        return cvmodule->error("Missing integrated endpoint coordinates for " + name, COLVARS_INPUT_ERROR);
+      if (is_enabled(f_cv_external)) {
+        x_restart = x_ext;
+        cvcs[0]->set_value(x_ext, true);
+      }
+    }
   } else {
     x_reported = x;
   }
@@ -2714,7 +2780,10 @@ std::string const colvar::get_state_params() const
      << "  x "
      << std::setprecision(cvmodule->cv_prec)
      << std::setw(cvmodule->cv_width);
-  if (is_enabled(f_cv_external) && is_enabled(f_cv_extended_Lagrangian)) {
+  bool const endpoint = cvmodule->proxy->integrates_colvars_at_step_end();
+  if (endpoint && endpoint_x.type() != colvarvalue::type_notset) {
+    os << endpoint_x << "\n";
+  } else if (is_enabled(f_cv_external) && is_enabled(f_cv_extended_Lagrangian)) {
     // For an external colvar, x is one timestep in the future after integration
     // write x at beginning of timestep
     os << x_reported << "\n";
@@ -2726,18 +2795,22 @@ std::string const colvar::get_state_params() const
     os << "  v "
        << std::setprecision(cvmodule->cv_prec)
        << std::setw(cvmodule->cv_width)
-       << v_reported << "\n";
+       << (endpoint && is_enabled(f_cv_extended_Lagrangian) ? prev_v_ext : v_reported) << "\n";
   }
 
   if (is_enabled(f_cv_extended_Lagrangian)) {
     os << "  extended_x "
        << std::setprecision(cvmodule->cv_prec)
        << std::setw(cvmodule->cv_width)
-       << x_reported << "\n"
+       << (endpoint ? prev_x_ext : x_reported) << "\n"
        << "  extended_v "
        << std::setprecision(cvmodule->cv_prec)
        << std::setw(cvmodule->cv_width)
-       << v_reported << "\n";
+       << (endpoint ? prev_v_ext : v_reported) << "\n";
+    if (endpoint) {
+      os << std::setprecision(std::numeric_limits<cvm::real>::max_digits10)
+         << "  endpointNextX " << x_ext << "\n" << "  endpointNextV " << v_ext << "\n";
+    }
   }
 
   return os.str();

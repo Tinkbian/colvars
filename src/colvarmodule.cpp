@@ -958,7 +958,8 @@ int colvarmodule::calc(bool update_state)
                    COLVARS_NOT_IMPLEMENTED);
     }
     for (auto *cv : colvars) {
-      if (cv->is_enabled(colvardeps::f_cv_extended_Lagrangian)) {
+      if (cv->is_enabled(colvardeps::f_cv_extended_Lagrangian) &&
+          !proxy->integrates_colvars_at_step_end()) {
         return error("Extended-Lagrangian colvars do not support state-free evaluation.\n",
                      COLVARS_NOT_IMPLEMENTED);
       }
@@ -1766,6 +1767,12 @@ template <typename IST> IST & colvarmodule::read_state_template_(IST &is, restar
 
       has_step = parse->get_keyval(restart_conf, "step", it_restart, static_cast<step_number>(0),
                                    colvarparse::parse_restart);
+      if (proxy->integrates_colvars_at_step_end()) {
+        std::string engine_state;
+        parse->get_keyval(restart_conf, "endpointIntegratorState", engine_state, std::string(),
+                          colvarparse::parse_silent);
+        proxy->set_integrator_state(engine_state);
+      }
       if (info) {
         info->has_timestep = parse->get_keyval(restart_conf, "dt", info->timestep,
                                                0.0, colvarparse::parse_silent);
@@ -2140,6 +2147,8 @@ template <typename OST> OST &colvarmodule::write_state_template_(OST &os)
   if (proxy->units.size() > 0) {
     oss << "  units " << proxy->units << "\n";
   }
+  if (proxy->integrates_colvars_at_step_end())
+    oss << "  endpointIntegratorState " << proxy->get_integrator_state() << "\n";
 
   os << std::string("configuration");
   if (formatted) os << " {\n";

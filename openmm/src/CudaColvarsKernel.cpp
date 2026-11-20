@@ -50,9 +50,9 @@ KERNEL void gatherColvarsPositions(GLOBAL const real4* RESTRICT posq,
         z += (double) c.z;
 #endif
         const int4 offset = cellOffsets[i];
-        positions[i] = x-boxA.x*offset.x-boxB.x*offset.y-boxC.x*offset.z;
-        positions[i+NUM_SELECTED] = y-boxA.y*offset.x-boxB.y*offset.y-boxC.y*offset.z;
-        positions[i+2*NUM_SELECTED] = z-boxA.z*offset.x-boxB.z*offset.y-boxC.z*offset.z;
+        positions[i] = (x-boxA.x*offset.x-boxB.x*offset.y-boxC.x*offset.z)*LENGTH_FROM_NM;
+        positions[i+NUM_SELECTED] = (y-boxA.y*offset.x-boxB.y*offset.y-boxC.y*offset.z)*LENGTH_FROM_NM;
+        positions[i+2*NUM_SELECTED] = (z-boxA.z*offset.x-boxB.z*offset.y-boxC.z*offset.z)*LENGTH_FROM_NM;
     }
 }
 
@@ -61,15 +61,14 @@ KERNEL void addColvarsForces(GLOBAL const double* RESTRICT forces,
                             GLOBAL mm_ulong* RESTRICT forceBuffer) {
     for (int i = GLOBAL_ID; i < NUM_SELECTED; i += GLOBAL_SIZE) {
         const int atom = selected[i];
-        // Both packages use kJ/mol/nm.  OpenMM's accumulator has 32 fractional
-        // bits.  Atomics also make this safe if an OpenMM force uses another
-        // stream concurrently (for example PME).
+        // Convert Colvars forces to kJ/mol/nm, then to OpenMM's fixed point.
+        const double fixedPoint = FORCE_TO_OPENMM*4294967296.0;
         ATOMIC_ADD(&forceBuffer[atom],
-                   (mm_ulong) ((mm_long) (forces[i]*4294967296.0)));
+                   (mm_ulong) ((mm_long) (forces[i]*fixedPoint)));
         ATOMIC_ADD(&forceBuffer[atom+PADDED_NUM_ATOMS],
-                   (mm_ulong) ((mm_long) (forces[i+NUM_SELECTED]*4294967296.0)));
+                   (mm_ulong) ((mm_long) (forces[i+NUM_SELECTED]*fixedPoint)));
         ATOMIC_ADD(&forceBuffer[atom+2*PADDED_NUM_ATOMS],
-                   (mm_ulong) ((mm_long) (forces[i+2*NUM_SELECTED]*4294967296.0)));
+                   (mm_ulong) ((mm_long) (forces[i+2*NUM_SELECTED]*fixedPoint)));
     }
 }
 )CUDA";
@@ -79,6 +78,15 @@ public:
     CudaProxy(const ColvarsForce& owner, ContextImpl& context, CudaContext& cuda)
         : colvarproxy_openmm(owner, context.getSystem()), cuda_(cuda), allowGpu_(owner.getUseGpu()) {
         initializeColvars(context);
+        if (has_gpu_support()) {
+            for (const auto* variable : *module().variables()) {
+                for (const auto& component : variable->get_cvcs()) {
+                    auto *distance = dynamic_cast<colvar::distance*>(component.get());
+                    if (distance && distance->enable_single_pair_gpu() != COLVARS_OK)
+                        throw OpenMMException("Unable to initialize Colvars single-pair GPU distance");
+                }
+            }
+        }
     }
     smp_mode_t get_preferred_smp_mode() const override {
         return allowGpu_ ? smp_mode_t::gpu : smp_mode_t::none;
@@ -160,6 +168,8 @@ public:
                                      reinterpret_cast<double*>(forces_.getDevicePointer()));
             std::map<std::string, std::string> defines;
             defines["NUM_SELECTED"] = std::to_string(selectedCount_);
+            defines["LENGTH_FROM_NM"] = std::to_string(proxy_->lengthFromNm());
+            defines["FORCE_TO_OPENMM"] = std::to_string(proxy_->forceToOpenMM());
             defines["PADDED_NUM_ATOMS"] = std::to_string(cuda_.getPaddedNumAtoms());
             ComputeProgram program = cuda_.compileProgram(adapterSource, defines);
             gather_ = program->createKernel("gatherColvarsPositions");
@@ -290,18 +300,16 @@ private:
             << "; precision=" << (cuda_.getUseDoublePrecision() ? "double" :
                                   cuda_.getUseMixedPrecision() ? "mixed" : "single");
         if (proxy_->has_gpu_support()) {
-            out << "; GPU atom groups; CPU bias updates; CPU CVCs=";
-            bool first = true;
+            std::string cpu, gpu;
             for (const auto* variable : *proxy_->module().variables()) {
                 for (const auto& component : variable->get_cvcs()) {
-                    if (!component->is_enabled(colvardeps::f_cvc_support_gpu)) {
-                        if (!first) out << ',';
-                        out << variable->name << '/' << component->function_type();
-                        first = false;
-                    }
+                    auto& list = component->is_enabled(colvardeps::f_cvc_support_gpu) ? gpu : cpu;
+                    if (!list.empty()) list += ',';
+                    list += variable->name + '/' + component->function_type();
                 }
             }
-            if (first) out << "none";
+            out << "; GPU atom groups; CPU bias updates; GPU CVCs=" << (gpu.empty() ? "none" : gpu)
+                << "; CPU CVCs=" << (cpu.empty() ? "none" : cpu);
         } else {
             out << "; per force evaluation D2H=" << 3*sizeof(double)*selectedCount_
                 << " bytes positions, H2D=" << 3*sizeof(double)*selectedCount_ << " bytes forces";

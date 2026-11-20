@@ -224,9 +224,16 @@ __global__ void atoms_calc_cog_com_kernel(
         // printf("main = %d, (calc_cog) atom group = %p, COG = (%lf, %lf, %lf)\n", int(b_cog && b_com), atoms_pos_x_ag, cog.x, cog.y, cog.z);
       }
       if (b_com) {
-        com.x = com_tmp->x / total_mass;
-        com.y = com_tmp->y / total_mass;
-        com.z = com_tmp->z / total_mass;
+        if (num_atoms == 1) {
+          // Multiplication by mass followed by division can displace a singleton
+          // center by one ulp, giving a spurious direction at coincident centers.
+          const unsigned int pos = position_index ? position_index[0] : 0;
+          com.set(atoms_pos_x_ag[pos], atoms_pos_y_ag[pos], atoms_pos_z_ag[pos]);
+        } else {
+          com.x = com_tmp->x / total_mass;
+          com.y = com_tmp->y / total_mass;
+          com.z = com_tmp->z / total_mass;
+        }
         com_out->x = com.x;
         com_out->y = com.y;
         com_out->z = com.z;

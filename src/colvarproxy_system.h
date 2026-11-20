@@ -113,6 +113,15 @@ public:
   /// in which case they are really system forces
   virtual bool total_forces_same_step() const;
 
+  /// Engine commits one Colvars update at the constrained MD endpoint and
+  /// may request additional, read-only forces between integrations.
+  virtual bool integrates_colvars_at_step_end() const { return false; }
+  /// The platform requested another force calculation of the same accepted endpoint.
+  virtual bool replaying_colvars_endpoint() const { return false; }
+  /// Optional companion state (e.g. the extended thermostat's RNG) for that endpoint.
+  virtual std::string get_integrator_state() const { return {}; }
+  virtual void set_integrator_state(std::string const &) {}
+
   /// Get the molecule ID when called in VMD; raise error otherwise
   /// \param molid Set this argument equal to the current VMD molid
   virtual int get_molid(int &molid);
@@ -133,6 +142,13 @@ public:
 
   /// Get energy derivative with respect to lambda (if available)
   virtual int get_dE_dlambda(cvm::real* dE_dlambda);
+
+  /// Tempering parameter for a physical potential U/alpha (dimensionless).
+  virtual int get_tabf_alpha(cvm::real *alpha);
+  virtual int set_tabf_alpha(cvm::real alpha);
+  virtual int send_tabf_alpha();
+  /// Derivative of the tempered physical potential, in the Colvars energy unit.
+  virtual int get_dE_dtabf_alpha(cvm::real *derivative);
 
   /// Apply a scalar force on dE_dlambda (back-end distributes it onto atoms)
   virtual int apply_force_dE_dlambda(cvm::real* force);

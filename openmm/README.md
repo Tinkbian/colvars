@@ -210,11 +210,11 @@ and data movement on an actual GPU.
 | Integration timestep | Colvars receives fs | Integrator uses ps; adapter multiplies by 1,000 |
 | Atom number | One-based `atomNumbers` | Zero-based particle index |
 
-There is no extra length, energy, or force scaling at the OpenMM boundary.
-`units real` is rejected so a NAMD configuration cannot silently apply an
-Å/kcal/mol restraint to nm/kJ/mol coordinates. Convert such configurations
-explicitly, including CV widths, centers, and all bias parameters. PDB reference
-coordinates use the PDB convention of Å and are converted to nm by the loader.
+The table uses the default `gromacs` unit system. For an input written in Å
+and kcal/mol, call `force.setUnitSystem("real")` before creating the Context.
+An explicit `units` directive in the file must agree with this setting.
+The adapter converts positions, box vectors, energies and forces at the
+OpenMM boundary. PDB reference coordinates are read in Å in either mode.
 
 `dipoleMagnitude` and `dipoleAngle`, including uses inside composite CVs,
 require `force.setParticleCharges(charges)` before constructing the context.
@@ -306,14 +306,62 @@ Colvars' default `stepZeroData off` does not deposit a metadynamics hill at
 step zero. The analytical metadynamics tests explicitly use `stepZeroData on`
 so their first hill has a known 2 kJ/mol height at the initial coordinates.
 
-This integration supports the restraint variants and metadynamics whose state
-updates are separated from force/energy evaluation. Unsupported bias types,
-total-force sampling such as ABF/eABF, and `extendedLagrangian` CVs fail with an
-explicit error. Engine-provided replica messaging, scripted forces, and a
+This integration supports restraints and metadynamics with ordinary OpenMM
+integrators. The dedicated tempering integrator additionally supports eABF on
+extended coordinates and ABF on the external tempering coordinate. Conventional
+atomic total-force projection is unavailable. Engine-provided replica messaging, scripted forces, and a
 multi-GPU CUDA context are unsupported. OpenCL and HIP are not exposed through this
 OpenMM interface. Reference/CPU force group 31 is rejected because the OpenMM
 `CustomCPPForce` implementation uses a signed shift; use groups 0–30 there.
 CUDA uses an unsigned mask and accepts group 31.
+
+### Temperature-accelerated sampling with extended ABF
+
+Assign all physical terms, including reciprocal PME, to one force group.
+Assign the Colvars force to a second group. For an NVT run starting at
+α = 1 with a 2 fs timestep, 300 K and friction of 1/ps, use
+
+```python
+from openmm_colvars import ColvarsForce, ColvarsTABFIntegrator
+
+for physical_force in system.getForces():
+    physical_force.setForceGroup(0)
+bias = ColvarsForce("colvars.in", "bias")
+bias.setForceGroup(1)
+bias.setUnitSystem("real")  # input in Å and kcal/mol
+bias.setTargetTemperature(300.0)
+bias.setUseGpu(True)
+system.addForce(bias)
+integrator = ColvarsTABFIntegrator(0.002, 300.0, 1.0, 1.0, 0, 1)
+```
+
+Use `smp gpu` in the input for CUDA execution. Define the dimensionless
+`tabfAlpha {}` component as an extended coordinate with its fictitious
+mass, boundaries and thermostat. Define the geometric extended CV, ABF and
+well-tempered metadynamics using the usual Colvars keywords. The physical
+potential is `U/alpha`. Colvars sees the derivative `-U/alpha²` at the
+constrained endpoint, and its atomic bias force is applied at full strength.
+`integrator.getAlpha()` gives the α for the next step, and
+`integrator.getAlphaDerivative()` gives the derivative from the last step in
+kJ/mol. A group-0 OpenMM energy query returns the unscaled physical energy.
+Group 1 reports the Colvars potential energy. The auxiliary kinetic energy
+is available in the Colvars trajectory when `outputEnergy` is enabled.
+ABF with `applyBias off` contributes zero energy while continuing to collect
+samples. For ordinary one-dimensional, nonperiodic ABF the energy integrates
+the bin forces with their sample-count ramp. Multidimensional ABF reports a
+gridded free-energy estimate when available. Its sampled force field can be
+nonconservative, and the reported estimate omits the local ramp. Force caps
+and periodic force corrections also affect how closely the reported estimate
+follows the applied force. Use `pABFintegrateFreq 0` (the default) with this
+integrator. A projected ABF run needs its last projected PMF to resume, and
+the Colvars state stores only the sampled counts and gradients for ABF.
+
+Save the OpenMM checkpoint and Colvars state at the same completed step.
+To resume, supply that Colvars state with `bias.setRestartInputPrefix(...)`
+before creating the Context and load the paired OpenMM checkpoint before
+evaluating forces or taking another step. These files restore the ABF and
+CZAR sampling grids. The optional `UIestimator` writes separate `.UI.*`
+files and starts a new estimator history on a paired checkpoint restart.
 
 **Repeated CUDA initialization failures in OpenMM 8.6.1.** On the tested
 Windows RTX 5070 Ti, repeatedly constructing CUDA Contexts with an invalid
@@ -405,7 +453,8 @@ with events linking the existing Colvars per-group streams.
 | --- | --- |
 | CUDA with Colvars GPU atom groups / supported GPU CVs | Selected coordinates are gathered device-to-device; group/CV results required by the host bias are copied to host; small bias force coefficients return to the device. Atomic bias forces are accumulated on-device. |
 | A CPU CV component within a GPU-enabled configuration | Existing Colvars fallback may copy that component's atom-group coordinates/gradients between host and device. The backend diagnostic lists CPU components. This is not an all-device CV calculation. |
-| Distance CV in the minimal example and benchmark | The CPU component reads GPU-computed group centers and supplies a center force for each group. The GPU distributes these forces by mass. Native RMSD and coordination-number components evaluate their CVs on the device. |
+| Scalar `distance` between two unfitted single-atom groups | A device kernel computes the minimum-image displacement, distance and Cartesian gradients. The host bias reads the scalar distance, and the atomic gradients stay on-device. The backend lists the component under `GPU CVCs`. |
+| Other distance configurations | The CPU component reads GPU-computed group centers and supplies a center force for each group. The GPU distributes these forces by mass. Configurations that request gradient debugging, collection or inverse gradients retain the general implementation. |
 | CUDA with `setUseGpu(False)` | Downloads `3*M*sizeof(double) = 24*M` bytes of selected positions. The adapter uploads `24*M` bytes of forces when OpenMM sets `includeForces`. A Python energy query may also request forces for the integrator's kinetic-energy calculation. |
 | Bias algorithms | Bias state and bias energy/force coefficients are currently evaluated on the CPU, including harmonic restraints and metadynamics. |
 
