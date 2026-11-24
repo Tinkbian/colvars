@@ -133,7 +133,9 @@ if(OPENMM_COLVARS_ENABLE_CUDA)
     if(NOT EXISTS "${OPENMM_INCLUDE_DIR}/openmm/cuda/CudaContext.h")
         message(FATAL_ERROR "CUDA build requires installed OpenMM CUDA internal headers from the same OpenMM version")
     endif()
-    target_sources(OpenMMColvars PRIVATE resident/src/CudaColvarsKernel.cpp
+    target_sources(OpenMMColvars PRIVATE resident/src/CudaColvarsKernel.cpp resident/src/CudaTABFStep.cpp
+        resident/src/CudaTabfForce.cpp resident/src/CudaTabfBias.cpp
+        resident/src/CudaTabfDynamicsAdapter.cpp resident/src/CudaTabfVariables.cpp
         "${COLVARS_CORE_DIR}/cuda/colvaratoms_kernel.cu"
         "${COLVARS_CORE_DIR}/cuda/colvar_rotation_derivative_kernel.cu"
         "${COLVARS_CORE_DIR}/cuda/colvartypes_kernel.cu"

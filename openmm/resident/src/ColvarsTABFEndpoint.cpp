@@ -2,6 +2,9 @@
 #include "ColvarsForce.h"
 #include "ColvarsForceImpl.h"
 #include "colvarproxy_openmm.h"
+#ifdef OPENMM_COLVARS_ENABLE_CUDA
+#include "CudaTABFStep.h"
+#endif
 #include "openmm/NonbondedForce.h"
 #include "openmm/OpenMMException.h"
 #include "openmm/System.h"
@@ -67,16 +70,29 @@ void ColvarsTABFIntegrator::initialize(ContextImpl& c) {
     }
     if (colvarsForces != 1)
         throw OpenMMException("The TABF integrator requires exactly one ColvarsForce");
+    ColvarsForceImpl* endpoint = nullptr;
     for (ForceImpl* impl : c.getForceImpls()) {
         if (auto* bias = dynamic_cast<ColvarsForceImpl*>(impl)) {
             colvars_ = &bias->proxy();
+            endpoint = bias;
         } else if (impl->getDefaultParameters().count(derivativeParameterName()))
             throw OpenMMException("Another force uses the reserved TABF derivative Context parameter");
     }
     CustomIntegrator::initialize(c);
+    if (endpoint->getOwner().getUseDeviceBias()) {
+#ifdef OPENMM_COLVARS_ENABLE_CUDA
+        if (getNumComputations() != endpointComputationCount_)
+            throw OpenMMException("Additional CustomIntegrator operations are unsupported by device TABF");
+        deviceStep_ = createCudaTABFStep(c, *this, endpoint->deviceTabfKernel());
+#else
+        throw OpenMMException("Device TABF requires a CUDA build");
+#endif
+    }
 }
 
 void ColvarsTABFIntegrator::cleanup() {
+    deviceStep_.reset();
+    deviceBatchActive_ = devicePoisoned_ = false;
     colvars_ = nullptr;
     CustomIntegrator::cleanup();
 }

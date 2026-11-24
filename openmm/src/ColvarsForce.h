@@ -104,6 +104,10 @@ public:
     void setUnitSystem(const std::string& units);
     void setUseGpu(bool enabled) { useGpu_ = enabled; }
     bool getUseGpu() const { return useGpu_; }
+    /// Run supported TABF coordinates and biases on a single CUDA device.
+    /// Unsupported configurations raise an error when the Context is built.
+    void setUseDeviceBias(bool enabled) { useDeviceBias_ = enabled; }
+    bool getUseDeviceBias() const { return useDeviceBias_; }
     void setUseGPU(bool enabled) { setUseGpu(enabled); }
     bool getUseGPU() const { return getUseGpu(); }
     bool hasExplicitTabfSetting() const { return tabfConfigured_; }
@@ -129,6 +133,7 @@ private:
     friend class ::colvarproxy_openmm;
     bool sparseCharges_ = false;
     bool useGpu_ = true;
+    bool useDeviceBias_ = false;
     bool tabfConfigured_ = false;
     std::string unitSystem_ = "gromacs";
 #endif

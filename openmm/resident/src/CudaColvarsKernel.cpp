@@ -1,6 +1,7 @@
 // OpenMM CUDA adapter for the Colvars GPU implementation in ../src/cuda.
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #include "CudaColvarsKernel.h"
+#include "CudaTabfForce.h"
 #include "ColvarsForce.h"
 #include "colvarproxy_openmm.h"
 #include "colvar.h"
@@ -160,7 +161,7 @@ public:
             reordered_.resize(size);
             cellOffsets_.resize(size, mm_int4(0, 0, 0, 0));
             inverseOrder_.resize(cuda_.getNumAtoms());
-            if (!proxy_->has_gpu_support()) {
+            if (!owner.getUseDeviceBias() && !proxy_->has_gpu_support()) {
                 hostPositions_.allocate(3*size);
                 hostForces_.allocate(3*size);
             }
@@ -186,6 +187,9 @@ public:
             scatter_->addArg(forces_);
             scatter_->addArg(selected_);
             scatter_->addArg(cuda_.getLongForceBuffer());
+            if (owner.getUseDeviceBias()) {
+                device_ = std::make_unique<CudaTabfForce>(*proxy_,cuda_,positions_,forces_);
+            }
             cuda_.addReorderListener(new MappingListener(mapping_));
             updateMapping();
             describeBackend();
@@ -213,7 +217,7 @@ public:
         if (!includeForces && !includeEnergy) return 0.0;
         OpenMMColvarsLock lock(proxy_.get());
         ContextSelector selector(cuda_);
-        proxy_->beginEvaluation(context);
+        if (!device_) proxy_->beginEvaluation(context);
         updateMapping();
         const cudaStream_t stream = proxy_->get_default_stream();
         if (selectedCount_ > 0) {
@@ -223,6 +227,11 @@ public:
             gather_->setArg(6, mm_double4(b[0], b[1], b[2], 0));
             gather_->setArg(7, mm_double4(c[0], c[1], c[2], 0));
             gather_->execute(selectedCount_);
+        }
+        if (device_) {
+            const double energy = device_->evaluate(context,includeEnergy);
+            if (includeForces && selectedCount_) scatter_->execute(selectedCount_);
+            return energy;
         }
         if (proxy_->has_gpu_support()) {
             checkCuda(cudaMemsetAsync(reinterpret_cast<void*>(forces_.getDevicePointer()), 0,
@@ -264,6 +273,22 @@ public:
 
     colvarproxy_openmm& proxy() override { return *proxy_; }
     std::string backend() const override { return backend_; }
+    CudaArray& deviceTabfState() override { return device_->state(); }
+    void validateDeviceTabfStart(double alpha,long long step) override {
+        OpenMMColvarsLock lock(proxy_.get());
+        device_->validateStart(alpha,step);
+    }
+    void finishDeviceTabfBatch(double alpha) override {
+        OpenMMColvarsLock lock(proxy_.get());
+        ContextSelector selector(cuda_);
+        device_->checkBatchEnd(alpha);
+    }
+    void synchronizeBiasOutput() override {
+        if (!device_) return;
+        OpenMMColvarsLock lock(proxy_.get());
+        ContextSelector selector(cuda_);
+        device_->finishBatch();
+    }
 
 private:
     void updateMapping() {
@@ -295,11 +320,13 @@ private:
 
     void describeBackend() {
         std::ostringstream out;
-        out << "CUDA/" << (proxy_->has_gpu_support() ? "ColvarsGPU" : "ColvarsCPU")
+        out << "CUDA/" << (device_ || proxy_->has_gpu_support() ? "ColvarsGPU" : "ColvarsCPU")
             << "; selected atoms=" << selectedCount_
             << "; precision=" << (cuda_.getUseDoublePrecision() ? "double" :
                                   cuda_.getUseMixedPrecision() ? "mixed" : "single");
-        if (proxy_->has_gpu_support()) {
+        if (device_) {
+            out << "; device TABF: distances, walls, extended variables, ABF, CZAR and metadynamics";
+        } else if (proxy_->has_gpu_support()) {
             std::string cpu, gpu;
             for (const auto* variable : *proxy_->module().variables()) {
                 for (const auto& component : variable->get_cvcs()) {
@@ -320,6 +347,7 @@ private:
     CudaContext& cuda_;
     std::shared_ptr<MappingState> mapping_;
     std::unique_ptr<CudaProxy> proxy_;
+    std::unique_ptr<CudaTabfForce> device_;
     CudaArray positions_, forces_, selected_, offsets_;
     ComputeKernel gather_, scatter_;
     std::vector<int> reordered_, inverseOrder_;

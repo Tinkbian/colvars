@@ -303,9 +303,11 @@ protected:
 
 /// \brief Wall restraint
 /// (implementation of \link colvarbias_restraint \endlink)
+namespace ColvarsPlugin { struct CudaTabfVariableAccess; }
 class colvarbias_restraint_harmonic_walls
   : public colvarbias_restraint_k_moving
 {
+  friend struct ColvarsPlugin::CudaTabfVariableAccess;
 public:
 
   colvarbias_restraint_harmonic_walls(colvarmodule *cvmodule_in, char const *key);

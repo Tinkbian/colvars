@@ -13,7 +13,7 @@
 #include <vector>
 
 namespace OpenMM { class ContextImpl; class System; }
-namespace ColvarsPlugin { class ColvarsTABFIntegrator; }
+namespace ColvarsPlugin { class ColvarsTABFIntegrator; class CudaTabfForce; }
 
 // Colvars currently has shared feature tables and a legacy default proxy.
 // Serialize plugin entry points across OpenMM Contexts and select the active
@@ -73,6 +73,7 @@ public:
     void flushOutputs();
     colvarmodule& module() { return *cvmodule; }
 protected:
+    friend class ColvarsPlugin::CudaTabfForce;
     const ColvarsPlugin::ColvarsForce& owner_;
     const OpenMM::System& system_;
     OpenMM::ContextImpl* currentContext_ = nullptr;

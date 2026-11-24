@@ -4,6 +4,7 @@
 #include "openmm/internal/ContextImpl.h"
 #ifdef OPENMM_COLVARS_RESIDENT
 #include "../resident/src/colvarproxy_openmm.h"
+#include "../resident/src/CudaTABFStep.h"
 #endif
 
 #include <algorithm>
@@ -133,6 +134,9 @@ ColvarsTABFIntegrator::ColvarsTABFIntegrator(double stepSize,
     // Evaluate it once at the end of the MD step, then apply the full impulse.
     addComputePerDof("v", "v+dt*" + colvarsForce + "/m");
     addConstrainVelocities();
+#ifdef OPENMM_COLVARS_RESIDENT
+    endpointComputationCount_ = getNumComputations();
+#endif
 }
 
 int ColvarsTABFIntegrator::getPhysicalForceGroup() const
@@ -176,6 +180,44 @@ void ColvarsTABFIntegrator::step(int steps) {
         throw OpenMMException("The TABF integrator is not bound to a Context");
     if (steps < 0)
         throw OpenMMException("TABF step count must be nonnegative");
+#ifdef OPENMM_COLVARS_RESIDENT
+    if (deviceStep_ && steps > 0) {
+        if (devicePoisoned_)
+            throw OpenMMException("Restore the last paired TABF checkpoint in a new Context after a failed device step");
+        double alpha = getGlobalVariable(alphaIndex_);
+        double derivative = getGlobalVariable(derivativeIndex_);
+        const double kT = getGlobalVariableByName("tabf_kT");
+        const double friction = getGlobalVariableByName("tabf_friction");
+        deviceStep_->beginBatch(alpha, derivative, kT, friction);
+        deviceBatchActive_ = true;
+        try {
+            for (int i = 0; i < steps; ++i) {
+                const bool changed = context->updateContextState();
+                if (changed)
+                    stateChanged(State::Positions);
+                deviceStep_->integratePhysical(changed);
+                collectingBias_ = true;
+                deviceStep_->finishBias();
+                collectingBias_ = false;
+            }
+            deviceStep_->endBatch(alpha, derivative);
+        } catch (...) {
+            collectingBias_ = false;
+            deviceBatchActive_ = false;
+            devicePoisoned_ = true;
+            throw;
+        }
+        deviceBatchActive_ = false;
+        setGlobalVariable(alphaIndex_, alpha);
+        setGlobalVariable(derivativeIndex_, derivative);
+        const double decay = std::exp(-friction*getStepSize());
+        setGlobalVariableByName("tabf_decay", decay);
+        setGlobalVariableByName("tabf_noise", std::sqrt((1-decay)*(1+decay)*kT));
+        context->setParameter(derivativeParameterName(), derivative);
+        stateChanged(State::Positions);
+        return;
+    }
+#endif
     for (int i = 0; i < steps; ++i) {
         stepAlpha_ = getGlobalVariable(alphaIndex_);
 #ifdef OPENMM_COLVARS_RESIDENT

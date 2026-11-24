@@ -21,6 +21,8 @@
 #include "colvarparse.h"
 #include "colvardeps.h"
 
+namespace ColvarsPlugin { class CudaTabfDynamicsAdapter; struct CudaTabfVariableAccess; }
+
 #ifdef LEPTON
 #include "Lepton.h" // for runtime custom expressions
 #endif
@@ -51,6 +53,8 @@
 /// initialization line in the \link colvar \endlink constructor.
 
 class colvar : public colvardeps {
+  friend class ColvarsPlugin::CudaTabfDynamicsAdapter;
+  friend struct ColvarsPlugin::CudaTabfVariableAccess;
 
 public:
 

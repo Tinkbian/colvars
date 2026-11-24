@@ -14,6 +14,36 @@ not contain an OpenMM interface. This integration reuses the Colvars core and
 
 ## 1. Build and use from Python
 
+### Device TABF for Chignolin
+
+Build the resident backend with CUDA. The Python interface uses the usual
+`ColvarsForce` and `ColvarsTABFIntegrator` objects. For an input in Å and kcal/mol
+configure the force before adding it to the system.
+
+```python
+bias = ColvarsForce("colvars_chig.in", "bias")
+bias.setUnitSystem("real")
+bias.setUseDeviceBias(True)
+bias.setForceGroup(1)
+```
+
+Use the matching physical and bias groups in the TABF integrator. After
+creating the Context, `bias.getBackend(context)` includes `device TABF`.
+The device endpoint accepts one extended single-atom-pair distance, one
+extended `tabfAlpha`, optional monitoring distances, static harmonic walls,
+and local scalar ABF/CZAR and fixed-grid metadynamics on each extended variable.
+It supports one CUDA device and orthorhombic periodic or nonperiodic systems.
+Stochastic extended variables use the Linux libstdc++ checkpoint format.
+An unsupported configuration raises an exception. Other Colvars inputs can
+use the existing resident implementation with the default Force settings.
+
+The integrator evaluates the physical energy derivative and advances the
+coupled variables on the device. OpenMM still dispatches kernels from the
+host. Batch boundaries check device status and publish the scalar integrator
+globals. Scheduled trajectory, grid and restart output and explicit Python
+diagnostics synchronize the data they expose to Colvars. Pair the OpenMM
+checkpoint and Colvars state from the same endpoint when restarting.
+
 The commands below run from the **Colvars repository root**. Use a Python
 virtual environment or an activated conda environment so the build and runtime
 use the same OpenMM installation. Local validation used OpenMM 8.6.1.

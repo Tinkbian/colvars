@@ -987,6 +987,26 @@ int colvarmodule::calc(bool update_state)
   if (!update_state || error_code != COLVARS_OK) return error_code;
 
   error_code |= analyze();
+  error_code |= write_scheduled_output();
+  error_code |= end_of_step();
+  error_code |= proxy->end_of_step();
+  return error_code;
+}
+
+bool colvarmodule::scheduled_output_due() const
+{
+  if (cv_traj_freq && !cv_traj_name.empty() &&
+      (it == it_restart || cv_traj_write_labels || it % cv_traj_freq == 0)) return true;
+  if (it <= it_restart) return false;
+  if (restart_out_freq && it % restart_out_freq == 0) return true;
+  for (auto const *bias : biases)
+    if (bias->output_freq && it % bias->output_freq == 0) return true;
+  return false;
+}
+
+int colvarmodule::write_scheduled_output()
+{
+  int error_code = COLVARS_OK;
 
   // write trajectory files, if needed
   if (cv_traj_freq && cv_traj_name.size()) {
@@ -1030,11 +1050,6 @@ int colvarmodule::calc(bool update_state)
     }
   }
   this->decrease_depth();
-
-  error_code |= end_of_step();
-
-  // TODO move this to a base-class proxy method that calls this function
-  error_code |= proxy->end_of_step();
 
   return error_code;
 }

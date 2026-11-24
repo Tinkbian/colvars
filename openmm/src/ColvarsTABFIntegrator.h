@@ -3,12 +3,14 @@
 
 #include "openmm/CustomIntegrator.h"
 
+#include <memory>
 #include <string>
 
 class colvarproxy_openmm;
 
 namespace ColvarsPlugin {
 
+class CudaTABFStep;
 /// Langevin-middle style integrator for Colvars TABF simulations.
 ///
 /// This integrator keeps the physical potential scaled as U/alpha by applying
@@ -42,12 +44,18 @@ public:
     double nextAlpha() const { return nextAlpha_; }
 #ifdef OPENMM_COLVARS_RESIDENT
     void setStepSize(double size) override;
+#ifndef SWIG
+    bool isDeviceBatchActive() const { return deviceBatchActive_; }
+#endif
 protected:
     void initialize(OpenMM::ContextImpl& context) override;
     void cleanup() override;
 private:
     void configureEndpoint(double temperature, double frictionCoeff, double initialAlpha);
     colvarproxy_openmm* colvars_ = nullptr;
+    std::shared_ptr<CudaTABFStep> deviceStep_;
+    int endpointComputationCount_ = 0;
+    bool deviceBatchActive_ = false, devicePoisoned_ = false;
 #endif
 private:
     int alphaIndex_, derivativeIndex_;

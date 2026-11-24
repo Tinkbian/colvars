@@ -331,15 +331,15 @@ std::string ColvarsForce::getBackend(Context& c) const {
     return dynamic_cast<ColvarsForceImpl&>(getImplInContext(c)).backend();
 }
 double ColvarsForce::getColvarValue(Context& c, const std::string& name) const {
-    return dynamic_cast<ColvarsForceImpl&>(getImplInContext(c)).proxy().getColvarValue(name);
+    return dynamic_cast<ColvarsForceImpl&>(getImplInContext(c)).reportingProxy().getColvarValue(name);
 }
 long long ColvarsForce::getBiasUpdateCount(Context& c) const {
-    return dynamic_cast<ColvarsForceImpl&>(getImplInContext(c)).proxy().getBiasUpdateCount();
+    return dynamic_cast<ColvarsForceImpl&>(getImplInContext(c)).reportingProxy().getBiasUpdateCount();
 }
 std::string ColvarsForce::getBiasState(Context& c) const {
-    return dynamic_cast<ColvarsForceImpl&>(getImplInContext(c)).proxy().getBiasState();
+    return dynamic_cast<ColvarsForceImpl&>(getImplInContext(c)).reportingProxy().getBiasState();
 }
 void ColvarsForce::flushOutputs(Context& c) const {
-    dynamic_cast<ColvarsForceImpl&>(getImplInContext(c)).proxy().flushOutputs();
+    dynamic_cast<ColvarsForceImpl&>(getImplInContext(c)).reportingProxy().flushOutputs();
 }
 #endif

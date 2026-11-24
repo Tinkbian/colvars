@@ -28,17 +28,17 @@ conda layouts where discovery needs a hint, pass `-DOPENMM_CUDA_LIBRARY=...`
 and `-DOPENMM_COLVARS_CUDA_TOOLKIT_INCLUDE_DIR=...`. To exercise the GPU, add
 `--openmm-platform Reference,CPU,CUDA --require-cuda` to the test command.
 
-## Chignolin T+eABF with selected-atom CUDA transfers
+## Chignolin T+eABF on CUDA
 
 Use a separate build directory and installation path for
 `-DOPENMM_COLVARS_BACKEND=resident -DOPENMM_COLVARS_ENABLE_CUDA=ON`.
 Both builds use the same public force configuration and TABF stepping
 interface. The resident backend also accepts the original Chignolin input in
-Å and kcal/mol with `force.setUnitSystem("real")`. Its CUDA bridge evaluates
-supported distance components on device. Extended alpha, ABF and metadynamics
-history are updated on the host. It provides matching OpenMM and Colvars
-restart data for continuing this workflow. Select the installed module for
-each simulation with `PYTHONPATH`.
+Å and kcal/mol with `force.setUnitSystem("real")`. For Chignolin, enable the
+device endpoint with `force.setUseDeviceBias(True)` before creating the
+Context. This evaluates the distances, walls, extended variables, ABF, CZAR
+and metadynamics on the GPU. The resident backend also supports the original
+host bias update mode. Select the installed module with `PYTHONPATH`.
 
 See [resident build and restart instructions](RESIDENT.md) and the
 [source comparison](UPSTREAM.md).

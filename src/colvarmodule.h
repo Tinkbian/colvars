@@ -613,6 +613,9 @@ public:
   int write_restart_file(std::string const &out_name);
   /// Write all other output files
   int write_output_files();
+  /// Report the current accepted state using the configured output intervals.
+  bool scheduled_output_due() const;
+  int write_scheduled_output();
   /// Backup a file before writing it
   int backup_file(char const *filename);
 

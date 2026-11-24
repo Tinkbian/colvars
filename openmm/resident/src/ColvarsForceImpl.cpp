@@ -24,6 +24,8 @@ void ColvarsForceImpl::initialize(ContextImpl& context) {
     OpenMMColvarsLock lock;
     tabf_ = dynamic_cast<ColvarsTABFIntegrator*>(&context.getIntegrator()) != nullptr;
     platform_ = context.getPlatform().getName();
+    if (owner_.getUseDeviceBias() && (!tabf_ || !owner_.getUseGpu() || platform_ != "CUDA"))
+        throw OpenMMException("Device TABF needs ColvarsTABFIntegrator, GPU support and the CUDA platform");
     if (platform_ == "CUDA") {
 #ifdef OPENMM_COLVARS_ENABLE_CUDA
         cuda_ = createCudaColvarsKernel(context, owner_);
@@ -58,6 +60,15 @@ double ColvarsForceImpl::computeForce(ContextImpl& c, const std::vector<Vec3>& p
     return energy;
 }
 colvarproxy_openmm& ColvarsForceImpl::proxy() { return cuda_ ? cuda_->proxy() : *proxy_; }
+colvarproxy_openmm& ColvarsForceImpl::reportingProxy() {
+    if (cuda_) cuda_->synchronizeBiasOutput();
+    return proxy();
+}
+CudaColvarsKernel& ColvarsForceImpl::deviceTabfKernel() {
+    if (!owner_.getUseDeviceBias() || !cuda_)
+        throw OpenMMException("This Context has no device TABF kernel");
+    return *cuda_;
+}
 std::string ColvarsForceImpl::backend() const {
     return cuda_ ? cuda_->backend() : platform_ + "/Colvars CPU";
 }

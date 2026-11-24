@@ -19,6 +19,7 @@
 
 class colvar_grid_scalar;
 class colvar_grid_gradient;
+namespace ColvarsPlugin { class CudaTabfStateAccess; }
 
 
 
@@ -27,6 +28,7 @@ class colvarbias_meta
   : public virtual colvarbias,
     public virtual colvarbias_ti
 {
+  friend class ColvarsPlugin::CudaTabfStateAccess;
 
 public:
 
@@ -321,6 +323,7 @@ protected:
 
 /// \brief A hill for the metadynamics bias
 class colvarbias_meta::hill {
+  friend class ColvarsPlugin::CudaTabfStateAccess;
 
 protected:
 
