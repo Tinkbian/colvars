@@ -1,6 +1,7 @@
 """Metadynamics restart fidelity and read-only serialization regressions."""
 
 import math
+import re
 
 import numpy as np
 import openmm as mm
@@ -68,6 +69,54 @@ def evaluate(context, distance, step=None):
 def assert_same(left, right, engine):
     np.testing.assert_allclose(left[0], right[0], rtol=0, atol=engine.tolerances[1])
     np.testing.assert_allclose(left[1], right[1], rtol=0, atol=engine.tolerances[2])
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_projected_edge_hill_survives_expanded_grid_restart(engine, tmp_path, legacy):
+    fixed = configuration(grids=True, upper=0.8)
+    if legacy:
+        fixed = fixed.replace("newHillFrequency 1", "newHillFrequency 100")
+    expanding = fixed.replace("width 0.1", "width 0.1\n  expandBoundaries on")
+    source, _, bias = make_context(engine, tmp_path/"fixed", fixed)
+    evaluate(source, 0.76, 0)  # Project a hill at the original upper edge.
+    first = tmp_path/"first.state"
+    first.write_text(bias.getBiasState(source))
+
+    grown, _, bias = make_context(engine, tmp_path/"grown", expanding, first)
+    evaluate(grown, 0.76, 0)
+    evaluate(grown, 0.82, 1)  # Move the upper boundary to 1.0.
+    serialized = bias.getBiasState(grown)
+    assert serialized.count("hill {") == (1 if legacy else 2)
+    if legacy:
+        # Pre-tail grid checkpoints store only projected hills.
+        assert "unprojectedHills" not in serialized
+        serialized = re.sub(r"lastHillStep \d+\n", "", serialized)
+        serialized = re.sub(r"version \d{4}-\d{2}-\d{2}", "version 2024-06-01", serialized)
+    checkpoint = tmp_path/"expanded.state"
+    checkpoint.write_text(serialized)
+    expected = evaluate(grown, 1.03)
+    assert expected[0] > 0.04  # The projected boundary hill still acts outside.
+
+    restored, _, bias = make_context(engine, tmp_path/"restored", expanding, checkpoint)
+    evaluate(restored, 0.82, 1)
+    assert_same(evaluate(restored, 1.03), expected, engine)
+    assert bias.getBiasState(restored).count("hill {") == serialized.count("hill {")
+
+
+def test_legacy_unknown_keep_hills_does_not_classify_every_hill_as_an_edge(engine, tmp_path):
+    config = configuration(grids=True, keep_hills=True, upper=0.8)
+    original, _, bias = make_context(engine, tmp_path/"keep-all", config)
+    evaluate(original, 0.65, 0)  # Interior, but keepHills writes it explicitly.
+    legacy = bias.getBiasState(original).replace("keepHills on\n", "")
+    legacy = re.sub(r"lastHillStep \d+\n", "", legacy)
+    legacy = re.sub(r"version \d{4}-\d{2}-\d{2}", "version 2020-06-01", legacy)
+    assert legacy.count("hill {") == 1
+    checkpoint = tmp_path/"legacy.state"
+    checkpoint.write_text(legacy)
+    restored, _, _ = make_context(engine, tmp_path/"legacy", config.replace("keepHills on", "keepHills off"),
+                                  checkpoint)
+    evaluate(restored, 0.65, 0)
+    assert evaluate(restored, 0.82)[0] == pytest.approx(0.0, abs=engine.tolerances[1])
 
 
 @pytest.mark.parametrize("legacy", [False, True])

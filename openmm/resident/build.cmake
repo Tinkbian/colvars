@@ -135,6 +135,7 @@ if(OPENMM_COLVARS_ENABLE_CUDA)
     endif()
     target_sources(OpenMMColvars PRIVATE resident/src/CudaColvarsKernel.cpp resident/src/CudaTABFStep.cpp
         resident/src/CudaTabfForce.cpp resident/src/CudaTabfBias.cpp
+        resident/src/CudaTabfJointAbf.cpp resident/src/CudaTabfJointMeta.cpp
         resident/src/CudaTabfDynamicsAdapter.cpp resident/src/CudaTabfVariables.cpp
         "${COLVARS_CORE_DIR}/cuda/colvaratoms_kernel.cu"
         "${COLVARS_CORE_DIR}/cuda/colvar_rotation_derivative_kernel.cu"

@@ -1,4 +1,4 @@
-// Single-device, scalar TABF endpoint for the resident OpenMM ForceImpl.
+// Single-device TABF endpoint for the resident OpenMM ForceImpl.
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #include "CudaTabfForce.h"
 #include "ColvarsTABFIntegrator.h"
@@ -28,7 +28,8 @@ KERNEL void computeDeviceTabf(GLOBAL const double* p, GLOBAL double* f,
     GLOBAL double* scalar, GLOBAL double* obs, GLOBAL double4* geometry,
     GLOBAL double* potential, GLOBAL int* error,
     long long step, int advance, int first, double dt, double4 box, double energyToKJ,
-    int wantEnergy, int replay) {
+    int wantEnergy, int replay,
+    GLOBAL const TabfJointSpec* jointAbf, GLOBAL const TabfJointMetaSpec* jointMeta) {
     if (GLOBAL_ID || *error) return;
     if (!(scalar[0] > 0.0) || !isfinite(scalar[0]) || !isfinite(scalar[1])) { *error = 1; return; }
     for (int j = 0; j < 3*NUM_SELECTED; ++j) f[j] = 0;
@@ -52,6 +53,26 @@ KERNEL void computeDeviceTabf(GLOBAL const double* p, GLOBAL double* f,
 
     double total = 0.0;
     double nextAlpha = scalar[0];
+    TabfExtView views[2];
+    const int axisToCv[] = {DISTANCE_CV, ALPHA_CV};
+    double extended[2], systemForce[2], jointForce[2] = {0.0, 0.0};
+    for (int a = 0; a < 2; ++a) {
+        views[a] = tabfExtView(cfg[a], state[a], geometry[axisToCv[a]].w, -scalar[1]/energyToKJ, replay);
+        extended[a] = views[a].x;
+        systemForce[a] = views[a].systemForce;
+    }
+#ifdef JOINT_ABF
+    const TabfJointResult abf = tabfJointAbf(*jointAbf, bias, advance, first, extended, systemForce);
+    if (abf.error) { *error = 30+abf.error; return; }
+    total += abf.energy;
+    for (int a = 0; a < 2; ++a) jointForce[a] += abf.force[a];
+#endif
+#ifdef JOINT_META
+    const TabfJointMetaResult meta = tabfJointMeta(*jointMeta, bias, step, advance, first, extended[0], extended[1]);
+    if (meta.error) { *error = 40+meta.error; return; }
+    total += meta.energy;
+    for (int a = 0; a < 2; ++a) jointForce[a] += meta.force[a];
+#endif
     for (int i = 0; i < NUM_CV; ++i) {
         int4 m = mapping[i];
         const double4 g = geometry[i], wall = walls[i];
@@ -62,14 +83,14 @@ KERNEL void computeDeviceTabf(GLOBAL const double* p, GLOBAL double* f,
         double reported = actual;
         if (m.w >= 0) {
             const int a = m.w;
-            TabfExtView v = tabfExtView(cfg[a], state[a], actual, -scalar[1]/energyToKJ, replay);
+            TabfExtView v = views[a];
             TabfBiasResult b = tabfBias(specs[a],bias,step,advance,first,actual,v.x,v.systemForce,wantEnergy);
             if (b.error) { *error = 10+b.error; return; }
             reported = v.x;
             total += v.springEnergy+b.energy;
             if (advance) {
                 double noise = cfg[a].frictionPerFs != 0.0 ? tabfGaussian(*rng) : 0.0;
-                int err = tabfExtAdvance(cfg[a],state[a],v,b.force,force,dt,noise,step);
+                int err = tabfExtAdvance(cfg[a],state[a],v,b.force+jointForce[a],force,dt,noise,step);
                 if (err) { *error = 20+err; return; }
                 if (cfg[a].external) nextAlpha = state[a].x;
             }
@@ -129,8 +150,20 @@ CudaTabfForce::CudaTabfForce(colvarproxy_openmm& proxy, CudaContext& cuda,
     }
     std::array<colvarbias_abf*,2> abf{};
     std::array<colvarbias_meta*,2> meta{};
+    colvarbias_abf* jointAbf = nullptr;
+    colvarbias_meta* jointMeta = nullptr;
     for (auto* b : module.biases) {
         if (dynamic_cast<colvarbias_restraint_harmonic_walls*>(b)) continue;
+        if (b->num_variables() == 2) {
+            if (auto* v = dynamic_cast<colvarbias_abf*>(b); v && !jointAbf) jointAbf = v;
+            else if (auto* v = dynamic_cast<colvarbias_meta*>(b); v && !jointMeta) {
+                if (b->variables(0) != cvs[axisVariable_[0]] || b->variables(1) != cvs[axisVariable_[1]])
+                    throw OpenMMException("Joint device metadynamics requires distance, alpha order: "+b->name);
+                jointMeta = v;
+            }
+            else throw OpenMMException("Unsupported or duplicate joint device TABF bias: "+b->name);
+            continue;
+        }
         if (b->num_variables()!=1) throw OpenMMException("Device TABF requires scalar biases: "+b->name);
         auto cv = std::find(cvs.begin(),cvs.end(),b->variables(0));
         int a = cv != cvs.end() ? variables_[cv-cvs.begin()].axis : -1;
@@ -141,6 +174,13 @@ CudaTabfForce::CudaTabfForce(colvarproxy_openmm& proxy, CudaContext& cuda,
     }
     for (int a=0; a<2; ++a)
         if (!biases_[a].configure(abf[a],meta[a],why)) throw OpenMMException(why);
+    for (size_t i=0; i<cvs.size(); ++i)
+        if (cvs[i]->expand_boundaries && !(jointMeta && variables_[i].axis == 0))
+            throw OpenMMException("Device TABF supports expanding bounds on the joint metadynamics distance only");
+    if (!jointAbf_.configure(jointAbf,cvs[axisVariable_[0]],cvs[axisVariable_[1]],why) ||
+        !jointMeta_.configure(jointMeta,why)) throw OpenMMException(why);
+    useJointAbf_ = jointAbf != nullptr;
+    useJointMeta_ = jointMeta != nullptr;
     TabfGaussianState random{};
     if (stochastic_ && !CudaTabfDynamicsAdapter::readRng(proxy,random))
         throw OpenMMException("Device TABF requires a compatible Colvars RNG checkpoint (Linux libstdc++)");
@@ -155,24 +195,42 @@ CudaTabfForce::CudaTabfForce(colvarproxy_openmm& proxy, CudaContext& cuda,
     geometry_.initialize<mm_double4>(cuda,cvs.size(),"tabfDistanceGradients");
     potential_.initialize<double>(cuda,1,"tabfBiasPotential");
     specBuffer_.initialize<TabfBiasSpec>(cuda,2,"tabfAdaptiveParameters");
-    const std::string source = std::string(tabfDynamicsCudaSource())+cudaTabfBiasSource+endpointSource;
-    auto program = cuda.compileProgram(source, {{"NUM_CV",std::to_string(cvs.size())},
-        {"NUM_SELECTED",std::to_string(proxy.requestedAtoms().size())}});
+    jointAbfParams_.initialize<TabfJointSpec>(cuda,1,"tabfJointAbfParameters");
+    jointMetaParams_.initialize<TabfJointMetaSpec>(cuda,1,"tabfJointMetaParameters");
+    const std::string source = std::string(tabfDynamicsCudaSource())+cudaTabfBiasSource+
+        cudaTabfJointAbfSource+cudaTabfJointMetaSource+endpointSource;
+    std::map<std::string,std::string> defines{{"NUM_CV",std::to_string(cvs.size())},
+        {"NUM_SELECTED",std::to_string(proxy.requestedAtoms().size())},
+        {"DISTANCE_CV",std::to_string(axisVariable_[0])},{"ALPHA_CV",std::to_string(axisVariable_[1])}};
+    if (useJointAbf_) defines["JOINT_ABF"] = "1";
+    if (useJointMeta_) defines["JOINT_META"] = "1";
+    auto program = cuda.compileProgram(source, defines);
     evaluate_ = program->createKernel("computeDeviceTabf");
     packBiases();
     for (auto* array : {&positions,&forces,&mapping_,&walls_,&configs_,&states_,&rng_,&specBuffer_,
                         &biasBuffer_,&scalars_,&diagnostics_,&geometry_,&potential_,&error_})
         evaluate_->addArg(*array);
     for (int i=0; i<8; ++i) evaluate_->addArg();
+    evaluate_->addArg(jointAbfParams_);
+    evaluate_->addArg(jointMetaParams_);
 }
 
 void CudaTabfForce::packBiases() {
     std::vector<double> buffer;
     for (int a=0; a<2; ++a) specs_[a] = biases_[a].pack(buffer,capacitySteps);
+    if (useJointAbf_) {
+        jointAbfSpec_ = jointAbf_.pack(buffer);
+        jointAbfParams_.upload(&jointAbfSpec_);
+    }
+    if (useJointMeta_) {
+        jointMetaSpec_ = jointMeta_.pack(buffer,capacitySteps);
+        jointMetaParams_.upload(&jointMetaSpec_);
+    }
     specBuffer_.upload(specs_);
     if (!biasBuffer_.isInitialized()) biasBuffer_.initialize<double>(cuda_,buffer.size(),"tabfAdaptiveGrids");
     else if (biasBuffer_.getSize()!=buffer.size()) biasBuffer_.resize(buffer.size());
     biasBuffer_.upload(buffer);
+    needsPack_ = false;
 }
 
 void CudaTabfForce::checkDevice() {
@@ -246,6 +304,7 @@ double CudaTabfForce::evaluate(ContextImpl& context, bool energy) {
         if (module.update_engine_parameters()) throw OpenMMException("Could not set device TABF timestep");
         proxy_.lastTimestepFs_=dt;
     }
+    if (needsPack_) packBiases();
     evaluate_->setArg(8,biasBuffer_);
     evaluate_->setArg(14,step);
     evaluate_->setArg(15,int(advance));
@@ -277,7 +336,10 @@ double CudaTabfForce::evaluate(ContextImpl& context, bool energy) {
     return potential;
 }
 
-void CudaTabfForce::finishBatch() {
+void CudaTabfForce::finishBatch(bool outputMayChange) {
+    // Output can integrate the multidimensional ABF PMF. Snapshot it after
+    // the core output writers finish and before the next device evaluation.
+    if (outputMayChange && useJointAbf_) needsPack_ = true;
     if (!pending_) return;
     checkDevice();
     std::vector<TabfExtState> states;
@@ -293,6 +355,8 @@ void CudaTabfForce::finishBatch() {
         CudaTabfDynamicsAdapter::write(*cvs[axisVariable_[a]],states[a],m.step_relative());
         biases_[a].unpack(specs_[a],data);
     }
+    if (useJointAbf_) jointAbf_.unpack(jointAbfSpec_, data);
+    if (useJointMeta_) jointMeta_.unpack(jointMetaSpec_, data);
     const size_t n = cvs.size();
     publishTabfMonitorsAndWalls(proxy_,variables_,{observations.begin(),observations.begin()+n},
         {observations.begin()+n,observations.begin()+2*n},proxy_.lastTimestepFs_,m.step_relative());
@@ -303,5 +367,5 @@ void CudaTabfForce::finishBatch() {
     proxy_.pendingAlpha_ = states[1].x;
     proxy_.biasUpdateCount_ += pending_;
     pending_ = 0;
-    packBiases();
+    needsPack_ = true;
 }

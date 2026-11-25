@@ -283,11 +283,11 @@ public:
         ContextSelector selector(cuda_);
         device_->checkBatchEnd(alpha);
     }
-    void synchronizeBiasOutput() override {
+    void synchronizeBiasOutput(bool outputMayChange) override {
         if (!device_) return;
         OpenMMColvarsLock lock(proxy_.get());
         ContextSelector selector(cuda_);
-        device_->finishBatch();
+        device_->finishBatch(outputMayChange);
     }
 
 private:
@@ -325,7 +325,11 @@ private:
             << "; precision=" << (cuda_.getUseDoublePrecision() ? "double" :
                                   cuda_.getUseMixedPrecision() ? "mixed" : "single");
         if (device_) {
-            out << "; device TABF: distances, walls, extended variables, ABF, CZAR and metadynamics";
+            out << "; device TABF: distances, walls, extended variables";
+            if (device_->hasJointAbf()) out << "; joint 2D ABF";
+            if (device_->hasJointMeta()) out << "; joint 2D metadynamics";
+            if (!device_->hasJointAbf() && !device_->hasJointMeta())
+                out << ", ABF, CZAR and metadynamics";
         } else if (proxy_->has_gpu_support()) {
             std::string cpu, gpu;
             for (const auto* variable : *proxy_->module().variables()) {

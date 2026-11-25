@@ -17,7 +17,7 @@ public:
     double computeForce(OpenMM::ContextImpl&, const std::vector<OpenMM::Vec3>&,
                          std::vector<OpenMM::Vec3>&) override;
     colvarproxy_openmm& proxy();
-    colvarproxy_openmm& reportingProxy();
+    colvarproxy_openmm& reportingProxy(bool outputMayChange = false);
     CudaColvarsKernel& deviceTabfKernel();
     std::string backend() const;
 private:

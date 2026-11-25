@@ -60,8 +60,8 @@ double ColvarsForceImpl::computeForce(ContextImpl& c, const std::vector<Vec3>& p
     return energy;
 }
 colvarproxy_openmm& ColvarsForceImpl::proxy() { return cuda_ ? cuda_->proxy() : *proxy_; }
-colvarproxy_openmm& ColvarsForceImpl::reportingProxy() {
-    if (cuda_) cuda_->synchronizeBiasOutput();
+colvarproxy_openmm& ColvarsForceImpl::reportingProxy(bool outputMayChange) {
+    if (cuda_) cuda_->synchronizeBiasOutput(outputMayChange);
     return proxy();
 }
 CudaColvarsKernel& ColvarsForceImpl::deviceTabfKernel() {

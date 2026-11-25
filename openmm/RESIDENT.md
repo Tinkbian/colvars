@@ -32,6 +32,13 @@ creating the Context, `bias.getBackend(context)` includes `device TABF`.
 The device endpoint accepts one extended single-atom-pair distance, one
 extended `tabfAlpha`, optional monitoring distances, static harmonic walls,
 and local scalar ABF/CZAR and fixed-grid metadynamics on each extended variable.
+For 10ALA v2, a single two-dimensional ABF and a single two-dimensional
+metadynamics bias can share these extended variables. Use `CZARestimator off`
+for joint ABF. Joint metadynamics accepts `colvars d alpha`, a fixed alpha
+grid, and optional `expandBoundaries on` on the distance. ABF samples its
+original grid. Each accepted sample and each hill updates both force
+components on the GPU. The usual Colvars output routines reconstruct the ABF
+PMF for reporting and write the joint grids and restart state.
 It supports one CUDA device and orthorhombic periodic or nonperiodic systems.
 Stochastic extended variables use the Linux libstdc++ checkpoint format.
 An unsupported configuration raises an exception. Other Colvars inputs can

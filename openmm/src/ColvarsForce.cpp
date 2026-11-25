@@ -340,6 +340,6 @@ std::string ColvarsForce::getBiasState(Context& c) const {
     return dynamic_cast<ColvarsForceImpl&>(getImplInContext(c)).reportingProxy().getBiasState();
 }
 void ColvarsForce::flushOutputs(Context& c) const {
-    dynamic_cast<ColvarsForceImpl&>(getImplInContext(c)).reportingProxy().flushOutputs();
+    dynamic_cast<ColvarsForceImpl&>(getImplInContext(c)).reportingProxy(true).flushOutputs();
 }
 #endif

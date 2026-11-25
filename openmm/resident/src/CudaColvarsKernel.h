@@ -15,7 +15,7 @@ public:
     virtual OpenMM::CudaArray& deviceTabfState() = 0;
     virtual void validateDeviceTabfStart(double alpha, long long step) = 0;
     virtual void finishDeviceTabfBatch(double alpha) = 0;
-    virtual void synchronizeBiasOutput() = 0;
+    virtual void synchronizeBiasOutput(bool outputMayChange) = 0;
 };
 std::unique_ptr<CudaColvarsKernel> createCudaColvarsKernel(
     OpenMM::ContextImpl&, const ColvarsForce&);

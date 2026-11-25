@@ -23,12 +23,13 @@
 #include "colvar_UIestimator.h"
 
 typedef cvm::real *gradient_t;
-namespace ColvarsPlugin { class CudaTabfStateAccess; }
+namespace ColvarsPlugin { class CudaTabfStateAccess; class CudaTabfJointAbf; }
 
 
 /// ABF bias
 class colvarbias_abf : public colvarbias {
   friend class ColvarsPlugin::CudaTabfStateAccess;
+  friend class ColvarsPlugin::CudaTabfJointAbf;
 
 public:
 

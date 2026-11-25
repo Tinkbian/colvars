@@ -19,7 +19,7 @@
 
 class colvar_grid_scalar;
 class colvar_grid_gradient;
-namespace ColvarsPlugin { class CudaTabfStateAccess; }
+namespace ColvarsPlugin { class CudaTabfStateAccess; class CudaTabfJointMeta; }
 
 
 
@@ -29,6 +29,7 @@ class colvarbias_meta
     public virtual colvarbias_ti
 {
   friend class ColvarsPlugin::CudaTabfStateAccess;
+  friend class ColvarsPlugin::CudaTabfJointMeta;
 
 public:
 
@@ -203,6 +204,9 @@ protected:
   /// its grids. Absent in legacy states, which always stored projected grids.
   size_t restart_unprojected_hills = 0;
 
+  /// A compact gridded state stores only boundary hills before its pending tail.
+  bool restart_projected_edge_prefix = false;
+
   /// Latest local hill represented by this instance, including pending hills.
   /// -1 distinguishes an initial empty snapshot from a snapshot after step 0.
   cvm::step_number last_hill_step = -1;
@@ -324,6 +328,7 @@ protected:
 /// \brief A hill for the metadynamics bias
 class colvarbias_meta::hill {
   friend class ColvarsPlugin::CudaTabfStateAccess;
+  friend class ColvarsPlugin::CudaTabfJointMeta;
 
 protected:
 

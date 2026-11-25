@@ -85,7 +85,7 @@ bool configureTabfVariables(colvarproxy_openmm& proxy, std::vector<TabfVariable>
         why = "Unsupported device TABF variable "+cv.name;
         if (!cv.is_enabled() || cv.get_time_step_factor() != 1 || !cv.is_enabled(colvardeps::f_cv_single_cvc) ||
             cv.num_cvcs() != 1 || cv.value().type() != colvarvalue::type_scalar || cv.period != 0.0 ||
-            cv.expand_boundaries || !(cv.width > 0.0) || !std::isfinite(cv.width)) return false;
+            !(cv.width > 0.0) || !std::isfinite(cv.width)) return false;
         for (int flag : {colvardeps::f_cv_scripted, colvardeps::f_cv_custom_function, colvardeps::f_cv_runave,
                          colvardeps::f_cv_corrfunc, colvardeps::f_cv_periodic, colvardeps::f_cv_collect_gradient,
                          colvardeps::f_cv_collect_atom_ids, colvardeps::f_cv_hide_Jacobian})

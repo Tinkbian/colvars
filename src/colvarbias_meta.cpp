@@ -1327,15 +1327,15 @@ int colvarbias_meta::set_state_params(std::string const &state_conf)
     return error_code;
   }
 
-  colvarparse::get_keyval(state_conf, "keepHills", restart_keep_hills, false,
-                          colvarparse::parse_restart);
-  colvarparse::get_keyval(state_conf, "unprojectedHills", restart_unprojected_hills, size_t(0),
-                          colvarparse::parse_restart);
+  bool const keep_hills_specified = colvarparse::get_keyval(
+      state_conf, "keepHills", restart_keep_hills, false, colvarparse::parse_restart);
+  bool const tail_specified = colvarparse::get_keyval(
+      state_conf, "unprojectedHills", restart_unprojected_hills, size_t(0), colvarparse::parse_restart);
   // Legacy snapshots did not distinguish an initial empty state from a state
   // already covering a step-zero hill. Retain their established step watermark
   // behavior; new snapshots always record the exact latest included hill.
-  colvarparse::get_keyval(state_conf, "lastHillStep", state_file_hill_step, state_file_step,
-                          colvarparse::parse_restart);
+  bool const last_step_specified = colvarparse::get_keyval(
+      state_conf, "lastHillStep", state_file_hill_step, state_file_step, colvarparse::parse_restart);
   last_hill_step = state_file_hill_step;
 
   if ((!restart_keep_hills) && (cvmodule->restart_version_number() < 20210604)) {
@@ -1350,6 +1350,13 @@ int colvarbias_meta::set_state_params(std::string const &state_conf)
       cvmodule->log("This state file/stream contains explicit hills.\n");
     }
   }
+
+  // Before the 2021-06-04 format, the absence of keepHills did not establish
+  // what had been saved. A modern standalone bias state can also be identified
+  // from its tail count or hill watermark without a module-level version.
+  restart_projected_edge_prefix = !restart_keep_hills &&
+    (keep_hills_specified || tail_specified || last_step_specified ||
+     cvmodule->restart_version_number() >= 20210604);
 
   std::string check_replica = "";
   if (colvarparse::get_keyval(state_conf, "replicaID", check_replica,
@@ -1484,7 +1491,17 @@ template <typename IST> IST &colvarbias_meta::read_state_data_template_(IST &is)
   // only the saved tail is pending; old state files have no tail count.
   new_hills_begin = use_grids ? std::next(hills.begin(), hills.size() - restart_unprojected_hills)
                              : hills.begin();
-  if (use_grids) recount_hills_off_grid(hills.begin(), hills.end());
+  if (use_grids) {
+    if (restart_projected_edge_prefix) {
+      // Expansion can move a former boundary into the grid interior. Its hill
+      // still contributes to off-grid queries. The writer saved that membership
+      // explicitly by including the hill in the prefix (see write_state_data).
+      recount_hills_off_grid(new_hills_begin, hills.end());
+      hills_off_grid.insert(hills_off_grid.begin(), hills.begin(), new_hills_begin);
+    } else {
+      recount_hills_off_grid(hills.begin(), hills.end());
+    }
+  }
 
   // If rebinGrids is set, rebin the grids based on the current information
   rebin_grids_after_restart();
