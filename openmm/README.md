@@ -42,3 +42,11 @@ host bias update mode. Select the installed module with `PYTHONPATH`.
 
 See [resident build and restart instructions](RESIDENT.md) and the
 [source comparison](UPSTREAM.md).
+
+## BFEE3 LDDM
+
+The [Amber LDDM workflow](examples/lddm/README.md) runs double-wide FEP in
+the bound complex and solvent, fits six bound-state restraints from
+equilibration, and combines both legs with the standard-state correction.
+It supports CPU Colvars, GPU Colvars, and GPU Colvars with cuPotential for
+the OpenMM nonbonded force.

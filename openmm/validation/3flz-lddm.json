@@ -1,0 +1,223 @@
+{
+  "system": "3FLZ",
+  "gpu": "NVIDIA GeForce RTX 4080",
+  "bfee3": "ce8a98a94f97d48cfef48c8212d2f1239a4cbfe4",
+  "colvars": "895dc22164682e987f2083b291f78935283ae73c",
+  "openmm": "8.4",
+  "namd": "3.0.2",
+  "lambda": [
+    1,
+    0.75,
+    0.5,
+    0.25,
+    0
+  ],
+  "units": {
+    "energy": "kcal/mol",
+    "max_force_error": "kJ/(mol nm)",
+    "r_error_angstrom": "angstrom"
+  },
+  "reference": "NAMD constrained run 0 coordinates; differences between adjacent lambda states at fixed geometric restraints",
+  "input_sha256": [
+    "54d33ba2950d92a7861bbacac04e626b9bc078024d60f8a0b46f7f1920a95902  ../input/complex.parm7",
+    "31b7188815303c327f76fde2361ad892f5963fe9b6bdbf9916ece438bfa9dafd  ../input/complex.pdb",
+    "f3edd1aa56f7ca87f44e5f89be071e147d2f7096c86160ad1f0bd1388ed186c8  ../input/complex.xyz",
+    "c422b93fdade1eaba0199cd9b841698b4b5c051a333b815fa3f2eef93b2b3173  ../input/complex.ndx",
+    "9cee4d3ac45510b50f8c6c1f7c7f67ec4bde07052a170695923fe9f7446abc32  ../input/fep.pdb",
+    "05268cc38c94a110d0b69bb2f351e83f4fb28e2def869063eb18d3ab1d17db6c  ../input/ligo.pdb",
+    "70e11b6dd39f0fda748bd685d84e24ab50cdd4e0d7388c8df411f2938777876f  ../input/ligo_hmr.prmtop"
+  ],
+  "fixed_coordinate": {
+    "bound": {
+      "namd_deltas": [
+        159.07209999999031,
+        148.93659999998636,
+        16.509900000004563,
+        15.773199999995995
+      ],
+      "openmm": [
+        {
+          "mode": "cpu",
+          "kcal": [
+            -137502.85859335735,
+            -137343.79587778874,
+            -137194.86872272738,
+            -137178.35886345178,
+            -137162.5857070523
+          ],
+          "neighbour_error_kcal": 0,
+          "relative_force_error": 0,
+          "max_force_error": 0,
+          "namd_max_delta_error": 0.009444938623346388
+        },
+        {
+          "mode": "gpu",
+          "kcal": [
+            -137502.85848425428,
+            -137343.79590724723,
+            -137194.86877021825,
+            -137178.35883062877,
+            -137162.58565114145
+          ],
+          "neighbour_error_kcal": 0.0001385615614708513,
+          "relative_force_error": 3.7899056807020155e-08,
+          "max_force_error": 0.0005340576171875,
+          "namd_max_delta_error": 0.009522992942947894
+        },
+        {
+          "mode": "cupotential",
+          "kcal": [
+            -137512.32843335895,
+            -137353.24795770776,
+            -137204.30256437842,
+            -137187.7926544409,
+            -137172.01949139143
+          ],
+          "neighbour_error_kcal": 0.01823826797772199,
+          "relative_force_error": 0.00047183735858460875,
+          "max_force_error": 4.557839430868626,
+          "namd_max_delta_error": 0.0087933293543756
+        }
+      ]
+    },
+    "solvent": {
+      "namd_deltas": [
+        150.11569999999483,
+        131.73610000000917,
+        -0.10070000000996515,
+        2.759699999995064
+      ],
+      "openmm": [
+        {
+          "mode": "cpu",
+          "kcal": [
+            -143254.9796332393,
+            -143104.8664551148,
+            -142973.13280081973,
+            -142973.23330745194,
+            -142970.47374400325
+          ],
+          "neighbour_error_kcal": 0,
+          "relative_force_error": 0,
+          "max_force_error": 0,
+          "namd_max_delta_error": 0.002521875489037484
+        },
+        {
+          "mode": "gpu",
+          "kcal": [
+            -143254.97976706063,
+            -143104.86651309818,
+            -142973.13269606297,
+            -142973.23333129365,
+            -142970.4737239781
+          ],
+          "neighbour_error_kcal": 0.00016274015069939196,
+          "relative_force_error": 7.74626709649736e-08,
+          "max_force_error": 0.00067138671875,
+          "namd_max_delta_error": 0.00244603754254058
+        },
+        {
+          "mode": "cupotential",
+          "kcal": [
+            -143264.50929051513,
+            -143114.39372581683,
+            -142982.6577381596,
+            -142982.7583906294,
+            -142979.9987090933
+          ],
+          "neighbour_error_kcal": 0.0023865737894084305,
+          "relative_force_error": 0.0008280878998237228,
+          "max_force_error": 2.9153032936155796,
+          "namd_max_delta_error": 0.00013530169962905347
+        }
+      ]
+    }
+  },
+  "cv": {
+    "cpu": {
+      "max_angle_error_deg": 6.348958905277868e-06,
+      "r_error_angstrom": 2.7857504001360667e-06,
+      "full_restraint_work_kcal": 3.5999731770149896
+    },
+    "gpu": {
+      "max_angle_error_deg": 6.348959004753851e-06,
+      "r_error_angstrom": 2.7857504001360667e-06,
+      "full_restraint_work_kcal": 3.5999731770149856
+    },
+    "cupotential": {
+      "max_angle_error_deg": 1.4779288903810084e-07,
+      "r_error_angstrom": 3.2021993945363647e-09,
+      "full_restraint_work_kcal": 3.5999505701401686
+    }
+  },
+  "namd_full_restraint_work_kcal": 3.6,
+  "bound_atoms": 55499,
+  "solvent_atoms": 49906,
+  "compact_solvent_control": {
+    "namd_deltas": [
+      150.88420000000042,
+      138.4948999999997,
+      5.630699999999706,
+      7.000700000000506
+    ],
+    "openmm": [
+      {
+        "mode": "cpu",
+        "kcal": [
+          -10375.283238958466,
+          -10224.400285043135,
+          -10085.906543170457,
+          -10080.275926307582,
+          -10073.275222359673
+        ],
+        "neighbour_error_kcal": 0,
+        "relative_force_error": 0,
+        "max_force_error": 0,
+        "namd_max_delta_error": 0.0012460846701287664
+      },
+      {
+        "mode": "gpu",
+        "kcal": [
+          -10375.283241196852,
+          -10224.400290964375,
+          -10085.90654437749,
+          -10080.27592102038,
+          -10073.275227756316
+        ],
+        "neighbour_error_kcal": 1.068384517566301e-05,
+        "relative_force_error": 3.9744294203731656e-08,
+        "max_force_error": 0.0001392364501953125,
+        "namd_max_delta_error": 0.0012497675234044436
+      },
+      {
+        "mode": "cupotential",
+        "kcal": [
+          -10375.230220617897,
+          -10224.354739310302,
+          -10085.869273215592,
+          -10080.238652583776,
+          -10073.237954418733
+        ],
+        "neighbour_error_kcal": 0.008275777969174669,
+        "relative_force_error": 0.0007774397976943688,
+        "max_force_error": 2.689416352659464,
+        "namd_max_delta_error": 0.009433905290279654
+      }
+    ]
+  },
+  "canonical_solvent_hashes": [
+    "d676010ba704334b23fb0a1ae6f7dfb5c0b2867429ab5c8db38025c7be16ef22  solvent-inputs/ligandOnly.parm7",
+    "65b9484486f30d2d50f958da6fb67fadd72199c16a294b751a5fc96f11028ecb  solvent-inputs/ligandOnly.pdb",
+    "65b9484486f30d2d50f958da6fb67fadd72199c16a294b751a5fc96f11028ecb  solvent-inputs/fep_ligandOnly.pdb"
+  ],
+  "runtime": {
+    "python": "3.12.16",
+    "openmm": "8.4",
+    "cupotential": "0.3.5",
+    "platform": "CUDA",
+    "precision": "mixed",
+    "native": "_openmm_colvars.so",
+    "native_sha256": "276f4430c339b66ce46b1613cdc134560e625ab4aa086e206829de48e07e056c",
+    "wrapper": "openmm_colvars.py"
+  }
+}

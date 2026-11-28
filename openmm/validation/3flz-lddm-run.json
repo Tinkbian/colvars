@@ -1,0 +1,609 @@
+{
+  "system": "3FLZ",
+  "device": "NVIDIA GeForce RTX 4080",
+  "openmm": "8.4",
+  "cupotential": "0.3.5",
+  "bfee3_commit": "ce8a98a94f97d48cfef48c8212d2f1239a4cbfe4",
+  "protocol": {
+    "dt_fs": 2,
+    "steps_per_state": 20000,
+    "discard_steps": 5000,
+    "sample_stride_steps": 50,
+    "bound_atoms": 55499,
+    "solvent_atoms": 49906,
+    "speed_basis": "one serial run per backend, integration including discard and neighbour projections, excluding setup and common preparation",
+    "all_states_verified": 51,
+    "all_work_samples_verified": 15300
+  },
+  "preparation": {
+    "eq": {
+      "stage": "eq",
+      "index": 0,
+      "mode": "gpu",
+      "backend": "CUDA/ColvarsGPU; selected atoms=2828; precision=mixed; GPU atom groups; CPU bias updates; GPU CVCs=RMSD/rmsd; CPU CVCs=eulerTheta/orientation,eulerPhi/orientation,eulerPsi/orientation,polarTheta/distanceDir,polarPhi/distanceDir,r/distance,translation/distance,orientation/orientation",
+      "nonbonded": "openmm.NonbondedForce",
+      "steps": 2500000,
+      "elapsed_s": 4469.750793650979,
+      "ns_day": 96.64968360509737,
+      "potential_kcal": -168962.33833565615
+    },
+    "reeq": {
+      "stage": "reeq",
+      "index": 0,
+      "mode": "gpu",
+      "backend": "CUDA/ColvarsGPU; selected atoms=2828; precision=mixed; GPU atom groups; CPU bias updates; GPU CVCs=none; CPU CVCs=eulerTheta/orientation,eulerPhi/orientation,eulerPsi/orientation,polarTheta/distanceDir,polarPhi/distanceDir,r/distance,translation/distance,orientation/orientation",
+      "nonbonded": "openmm.NonbondedForce",
+      "steps": 2500000,
+      "elapsed_s": 4397.826748744934,
+      "ns_day": 98.23033618213486,
+      "potential_kcal": -168560.19220088076
+    },
+    "solvent-eq": {
+      "stage": "solvent-eq",
+      "index": 0,
+      "mode": "gpu",
+      "backend": "unrestrained solvent leg",
+      "nonbonded": "openmm.NonbondedForce",
+      "steps": 2500000,
+      "elapsed_s": 2075.954915582901,
+      "ns_day": 208.09700478427783,
+      "potential_kcal": -159010.4146288659
+    }
+  },
+  "restraints": {
+    "centers": [
+      -13.5,
+      11.5,
+      -2.5,
+      56.5,
+      89.5,
+      13.45
+    ],
+    "k": [
+      0.07328299734945737,
+      0.018318512258984183,
+      0.047721011831158774,
+      0.12173668871688942,
+      0.279593560400406,
+      9.9240111314383
+    ],
+    "frames": 50001
+  },
+  "audit": {
+    "cpu": {
+      "bound": {
+        "intervals": 10,
+        "states": 11,
+        "valid_work_samples": 3300,
+        "minimum_final_state_box_edge_nm": 8.148969730335935,
+        "colvars_backend": [
+          "CUDA/ColvarsCPU; selected atoms=2828; precision=mixed; per force evaluation D2H=67872 bytes positions, H2D=67872 bytes forces"
+        ],
+        "primary_nonbonded": [
+          "openmm.NonbondedForce"
+        ]
+      },
+      "solvent": {
+        "intervals": 5,
+        "states": 6,
+        "valid_work_samples": 1800,
+        "minimum_final_state_box_edge_nm": 7.893273268148738,
+        "colvars_backend": [
+          "unrestrained solvent leg"
+        ],
+        "primary_nonbonded": [
+          "openmm.NonbondedForce"
+        ]
+      }
+    },
+    "gpu": {
+      "bound": {
+        "intervals": 10,
+        "states": 11,
+        "valid_work_samples": 3300,
+        "minimum_final_state_box_edge_nm": 8.141447364921799,
+        "colvars_backend": [
+          "CUDA/ColvarsGPU; selected atoms=2828; precision=mixed; GPU atom groups; CPU bias updates; GPU CVCs=none; CPU CVCs=eulerTheta/orientation,eulerPhi/orientation,eulerPsi/orientation,polarTheta/distanceDir,polarPhi/distanceDir,r/distance,translation/distance,orientation/orientation"
+        ],
+        "primary_nonbonded": [
+          "openmm.NonbondedForce"
+        ]
+      },
+      "solvent": {
+        "intervals": 5,
+        "states": 6,
+        "valid_work_samples": 1800,
+        "minimum_final_state_box_edge_nm": 7.90060069359432,
+        "colvars_backend": [
+          "unrestrained solvent leg"
+        ],
+        "primary_nonbonded": [
+          "openmm.NonbondedForce"
+        ]
+      }
+    },
+    "cupotential": {
+      "bound": {
+        "intervals": 10,
+        "states": 11,
+        "valid_work_samples": 3300,
+        "minimum_final_state_box_edge_nm": 8.146899969035873,
+        "colvars_backend": [
+          "CUDA/ColvarsGPU; selected atoms=2828; precision=mixed; GPU atom groups; CPU bias updates; GPU CVCs=none; CPU CVCs=eulerTheta/orientation,eulerPhi/orientation,eulerPsi/orientation,polarTheta/distanceDir,polarPhi/distanceDir,r/distance,translation/distance,orientation/orientation"
+        ],
+        "primary_nonbonded": [
+          "nvplugin.NonbondedForce"
+        ]
+      },
+      "solvent": {
+        "intervals": 5,
+        "states": 6,
+        "valid_work_samples": 1800,
+        "minimum_final_state_box_edge_nm": 7.892371416257668,
+        "colvars_backend": [
+          "unrestrained solvent leg"
+        ],
+        "primary_nonbonded": [
+          "nvplugin.NonbondedForce"
+        ]
+      }
+    }
+  },
+  "results": {
+    "cpu": {
+      "bound": {
+        "edges": [
+          {
+            "edge": 0,
+            "n_forward": 300,
+            "n_reverse": 150,
+            "bar": 68.60582732627765,
+            "fep": 68.5080485782364,
+            "hysteresis": 0.20114663285130518
+          },
+          {
+            "edge": 1,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 66.84250221926324,
+            "fep": 66.81270452197123,
+            "hysteresis": 0.24619931040709275
+          },
+          {
+            "edge": 2,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 65.0867825511165,
+            "fep": 65.0108810160846,
+            "hysteresis": 0.20548296369334196
+          },
+          {
+            "edge": 3,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 52.39689319491359,
+            "fep": 52.469647098884636,
+            "hysteresis": 3.1494860274356142
+          },
+          {
+            "edge": 4,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 59.40822313485691,
+            "fep": 59.47179215904774,
+            "hysteresis": 2.4075219150866403
+          },
+          {
+            "edge": 5,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 2.2644138525349895,
+            "fep": 2.773209694619453,
+            "hysteresis": 0.005556765986729939
+          },
+          {
+            "edge": 6,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 4.276725805633058,
+            "fep": 4.988030627377544,
+            "hysteresis": 1.3756071417542985
+          },
+          {
+            "edge": 7,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 4.114117210567247,
+            "fep": 3.8429684862116265,
+            "hysteresis": -0.5708840658057466
+          },
+          {
+            "edge": 8,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 3.700807895239877,
+            "fep": 4.287106150799151,
+            "hysteresis": 2.2316645312958308
+          },
+          {
+            "edge": 9,
+            "n_forward": 150,
+            "n_reverse": 300,
+            "bar": -0.4596903271590517,
+            "fep": -0.1571572439460278,
+            "hysteresis": 7.441230237913214
+          }
+        ],
+        "bar": 326.236602863244,
+        "fep": 328.00723108928645,
+        "steps": 220000,
+        "elapsed_s": 282.6684141312726,
+        "ns_day": 134.4897346130268
+      },
+      "solvent": {
+        "edges": [
+          {
+            "edge": 0,
+            "n_forward": 300,
+            "n_reverse": 150,
+            "bar": 135.801821402969,
+            "fep": 135.08018488036478,
+            "hysteresis": 2.3254921255517615
+          },
+          {
+            "edge": 1,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 116.21652586450197,
+            "fep": 116.28243069623119,
+            "hysteresis": 5.150351003386149
+          },
+          {
+            "edge": 2,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 55.33194935420101,
+            "fep": 55.33150905151561,
+            "hysteresis": 10.996019293584034
+          },
+          {
+            "edge": 3,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 3.144038867766629,
+            "fep": 3.3353095757430182,
+            "hysteresis": 6.349045194045367
+          },
+          {
+            "edge": 4,
+            "n_forward": 150,
+            "n_reverse": 300,
+            "bar": -41.255464093769675,
+            "fep": -41.048850355902836,
+            "hysteresis": 93.66746991885633
+          }
+        ],
+        "bar": 269.2388713956689,
+        "fep": 268.9805838479517,
+        "steps": 120000,
+        "elapsed_s": 102.84332307521254,
+        "ns_day": 201.6270904124239
+      },
+      "standard_state_kcal": 10.554752810211019,
+      "binding_bar_kcal": -46.44297865736406,
+      "binding_fep_kcal": -48.47189443112371
+    },
+    "gpu": {
+      "bound": {
+        "edges": [
+          {
+            "edge": 0,
+            "n_forward": 300,
+            "n_reverse": 150,
+            "bar": 68.12165772798566,
+            "fep": 68.03858593353229,
+            "hysteresis": 0.497426646551574
+          },
+          {
+            "edge": 1,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 65.98012052564756,
+            "fep": 65.94814139104581,
+            "hysteresis": 0.2838172060750992
+          },
+          {
+            "edge": 2,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 64.84639830623516,
+            "fep": 64.82042971291571,
+            "hysteresis": -0.1741944143324048
+          },
+          {
+            "edge": 3,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 52.626087796377355,
+            "fep": 52.72775677267134,
+            "hysteresis": 1.2226960180928543
+          },
+          {
+            "edge": 4,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 59.852163736828835,
+            "fep": 60.261440434065356,
+            "hysteresis": 2.7077734985733883
+          },
+          {
+            "edge": 5,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 1.6255334314500116,
+            "fep": 2.087873548496706,
+            "hysteresis": 1.6139620085814639
+          },
+          {
+            "edge": 6,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 3.930243607015672,
+            "fep": 4.167817143052198,
+            "hysteresis": 1.1547846475853465
+          },
+          {
+            "edge": 7,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 4.440010922879823,
+            "fep": 5.2135146942103905,
+            "hysteresis": 0.9599483336653085
+          },
+          {
+            "edge": 8,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 3.202164602322071,
+            "fep": 4.086986824991059,
+            "hysteresis": 2.1518205946558653
+          },
+          {
+            "edge": 9,
+            "n_forward": 150,
+            "n_reverse": 300,
+            "bar": -0.18709715881458222,
+            "fep": 0.060477184743637835,
+            "hysteresis": 8.523539024220081
+          }
+        ],
+        "bar": 324.4372834979276,
+        "fep": 327.4130236397246,
+        "steps": 220000,
+        "elapsed_s": 423.4976617380744,
+        "ns_day": 89.76672939344871
+      },
+      "solvent": {
+        "edges": [
+          {
+            "edge": 0,
+            "n_forward": 300,
+            "n_reverse": 150,
+            "bar": 135.72622028788845,
+            "fep": 135.34028841987612,
+            "hysteresis": 4.912034315117779
+          },
+          {
+            "edge": 1,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 115.61859436216264,
+            "fep": 115.89572121203364,
+            "hysteresis": 2.7633137652156563
+          },
+          {
+            "edge": 2,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 57.21302883676735,
+            "fep": 57.22201466075967,
+            "hysteresis": 9.898512346967586
+          },
+          {
+            "edge": 3,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": -0.07926217603031484,
+            "fep": -0.07874867516279016,
+            "hysteresis": 12.072257295207574
+          },
+          {
+            "edge": 4,
+            "n_forward": 150,
+            "n_reverse": 300,
+            "bar": -45.67271503119641,
+            "fep": -45.466101293329594,
+            "hysteresis": 102.60507054538782
+          }
+        ],
+        "bar": 262.8058662795917,
+        "fep": 262.913174324177,
+        "steps": 120000,
+        "elapsed_s": 99.80456886906177,
+        "ns_day": 207.76603952074095
+      },
+      "standard_state_kcal": 10.554752810211019,
+      "binding_bar_kcal": -51.076664408124834,
+      "binding_fep_kcal": -53.94509650533656
+    },
+    "cupotential": {
+      "bound": {
+        "edges": [
+          {
+            "edge": 0,
+            "n_forward": 300,
+            "n_reverse": 150,
+            "bar": 68.5065210042621,
+            "fep": 68.58597335302184,
+            "hysteresis": 0.12745460748273274
+          },
+          {
+            "edge": 1,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 66.47000061823357,
+            "fep": 66.62135327059053,
+            "hysteresis": -0.16773181629518774
+          },
+          {
+            "edge": 2,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 64.9050754728491,
+            "fep": 64.78348704134925,
+            "hysteresis": 0.40115702131365083
+          },
+          {
+            "edge": 3,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 53.20907914348747,
+            "fep": 54.036947030161436,
+            "hysteresis": 0.3002820023455257
+          },
+          {
+            "edge": 4,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 59.98168586160406,
+            "fep": 59.99923854964821,
+            "hysteresis": 2.7830827940430396
+          },
+          {
+            "edge": 5,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 2.528570061977064,
+            "fep": 2.7145845647716254,
+            "hysteresis": 0.9949650606952463
+          },
+          {
+            "edge": 6,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 3.3664353988902955,
+            "fep": 3.5026494273774604,
+            "hysteresis": 2.5105725096070213
+          },
+          {
+            "edge": 7,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 4.794887675281526,
+            "fep": 5.2167007651490085,
+            "hysteresis": 0.17986841700621525
+          },
+          {
+            "edge": 8,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 4.606704067474719,
+            "fep": 5.29096552343818,
+            "hysteresis": 1.652094210767891
+          },
+          {
+            "edge": 9,
+            "n_forward": 150,
+            "n_reverse": 300,
+            "bar": 1.3503553990063313,
+            "fep": 1.615626232922946,
+            "hysteresis": 5.535133390750617
+          }
+        ],
+        "bar": 329.71931470306623,
+        "fep": 332.3675257584304,
+        "steps": 220000,
+        "elapsed_s": 402.7647833888186,
+        "ns_day": 94.3875968502945
+      },
+      "solvent": {
+        "edges": [
+          {
+            "edge": 0,
+            "n_forward": 300,
+            "n_reverse": 150,
+            "bar": 136.60694986954505,
+            "fep": 136.29348071358532,
+            "hysteresis": 1.7632167276142638
+          },
+          {
+            "edge": 1,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 116.8041954860421,
+            "fep": 117.71176794651399,
+            "hysteresis": 2.9951351601091005
+          },
+          {
+            "edge": 2,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 56.48395683945623,
+            "fep": 56.48482824013364,
+            "hysteresis": 11.577499674390147
+          },
+          {
+            "edge": 3,
+            "n_forward": 150,
+            "n_reverse": 150,
+            "bar": 1.2575216247240764,
+            "fep": 1.2662727285474176,
+            "hysteresis": 9.669012847499516
+          },
+          {
+            "edge": 4,
+            "n_forward": 150,
+            "n_reverse": 300,
+            "bar": -49.29298621364343,
+            "fep": -49.086372475776614,
+            "hysteresis": 108.34866131405897
+          }
+        ],
+        "bar": 261.859637606124,
+        "fep": 262.66997715300374,
+        "steps": 120000,
+        "elapsed_s": 101.01045303803403,
+        "ns_day": 205.28568456367736
+      },
+      "standard_state_kcal": 10.554752810211019,
+      "binding_bar_kcal": -57.3049242867312,
+      "binding_fep_kcal": -59.142795795215655
+    }
+  },
+  "performance": {
+    "cpu": {
+      "bound": 134.4897346130268,
+      "solvent": 201.6270904124239,
+      "total_seconds": 385.5117372064851,
+      "combined_ns_day": 152.40002918129485,
+      "binding_bar_kcal": -46.44297865736406,
+      "max_abs_edge_hysteresis_kcal": 93.66746991885633
+    },
+    "gpu": {
+      "bound": 89.76672939344871,
+      "solvent": 207.76603952074095,
+      "total_seconds": 523.3022306071362,
+      "combined_ns_day": 112.27164067662359,
+      "binding_bar_kcal": -51.076664408124834,
+      "max_abs_edge_hysteresis_kcal": 102.60507054538782
+    },
+    "cupotential": {
+      "bound": 94.3875968502945,
+      "solvent": 205.28568456367736,
+      "total_seconds": 503.77523642685264,
+      "combined_ns_day": 116.62343789804504,
+      "binding_bar_kcal": -57.3049242867312,
+      "max_abs_edge_hysteresis_kcal": 108.34866131405897
+    }
+  }
+}
